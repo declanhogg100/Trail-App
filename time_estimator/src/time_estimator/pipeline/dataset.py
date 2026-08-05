@@ -2,7 +2,7 @@ import pandas as pd
 import torch
 from torch.nn.utils.rnn import pad_sequence
 
-FEATURE_COLUMNS = ["elevation", "grade"]
+FEATURE_COLUMNS = ["elevation", "grade", "distance_m"]
 
 
 def fit_normalization_stats(trail_dfs: list[pd.DataFrame]) -> tuple[pd.Series, pd.Series]:
@@ -14,6 +14,13 @@ def normalize_features(df: pd.DataFrame, mean: pd.Series, std: pd.Series) -> pd.
     df = df.copy()
     df[FEATURE_COLUMNS] = (df[FEATURE_COLUMNS] - mean) / std
     return df
+
+
+def group_segments_by_hike(segments_df: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    return {
+        hike_id: group.reset_index(drop=True)
+        for hike_id, group in segments_df.groupby("hike_id")
+    }
 
 
 def trail_to_tensor(df: pd.DataFrame) -> torch.Tensor:

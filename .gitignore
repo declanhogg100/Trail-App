@@ -19,3 +19,6 @@ venv/
 # Editors
 .vscode/
 .idea/
+
+time_estimator/data/hikr/*.csv
+time_estimator/data/hikr/*.parquet

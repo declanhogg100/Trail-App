@@ -5,13 +5,13 @@ import numpy as np
 import pandas as pd
 
 
-def load_gpx_points(filepath: str | Path) -> pd.DataFrame:
-    with open(filepath, "r") as f:
-        gpx = gpxpy.parse(f)
-
+def _gpx_to_points_df(gpx: gpxpy.gpx.GPX) -> pd.DataFrame:
     points = []
+    segment_start_indices = set()
     for track in gpx.tracks:
         for segment in track.segments:
+            if points:
+                segment_start_indices.add(len(points))
             for point in segment.points:
                 points.append(point)
 
@@ -26,13 +26,31 @@ def load_gpx_points(filepath: str | Path) -> pd.DataFrame:
     ]
     df = pd.DataFrame(rows)
 
+    # don't bridge distance across a track-segment boundary -- consecutive
+    # segments in a GPX file are often not physically continuous (e.g. a
+    # signal gap, or separate days of a multi-day trip), so the gap between
+    # them isn't real hiking distance
     cumulative_distance_m = [0.0]
     for i in range(1, len(points)):
-        step = points[i - 1].distance_3d(points[i])
+        if i in segment_start_indices:
+            step = 0.0
+        else:
+            step = points[i - 1].distance_3d(points[i])
         cumulative_distance_m.append(cumulative_distance_m[-1] + step)
 
     df["cumulative_distance_m"] = cumulative_distance_m
     return df
+
+
+def load_gpx_points(filepath: str | Path) -> pd.DataFrame:
+    with open(filepath, "r") as f:
+        gpx = gpxpy.parse(f)
+    return _gpx_to_points_df(gpx)
+
+
+def parse_gpx_string(gpx_text: str) -> pd.DataFrame:
+    gpx = gpxpy.parse(gpx_text)
+    return _gpx_to_points_df(gpx)
 
 
 def resample_by_distance(df: pd.DataFrame, step_m: float = 40.0) -> pd.DataFrame:
