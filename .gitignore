@@ -23,7 +23,8 @@ venv/
 time_estimator/data/hikr/*.csv
 time_estimator/data/hikr/*.parquet
 
-# osmnx auto-cache and large regenerable DEM tiles -- not source, not
-# meant to be version-controlled
+# osmnx auto-cache and all fetched/generated data (OSM trails, DEM/land-cover
+# tiles, computed features, trained model weights) -- regenerable from the
+# pipeline scripts, not meant to be version-controlled
 recommender/cache/
-recommender/data/dem/*.tif
+recommender/data/

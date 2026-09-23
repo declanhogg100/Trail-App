@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import rasterio
 from pyproj import Geod
-from shapely.geometry import LineString
+from shapely.geometry import LineString, MultiLineString
 
 DEM_DIR = "data/dem"
 _GEOD = Geod(ellps="WGS84")
@@ -28,7 +28,10 @@ def sample_elevation(lat: float, lon: float) -> float:
     # past the last valid pixel -- clamp back into bounds rather than crash
     row = min(max(row, 0), src.height - 1)
     col = min(max(col, 0), src.width - 1)
-    return float(src.read(1)[row, col])
+    # read just this one pixel via a window, not the whole band -- reading
+    # the full array here would re-load the entire tile from disk on every
+    # single call
+    return float(src.read(1, window=((row, row + 1), (col, col + 1)))[0, 0])
 
 
 METERS_PER_DEGREE_LAT = 111_320
@@ -75,6 +78,67 @@ def sample_surrounding_elevation(lat: float, lon: float, radius_m: float = 3000.
     return float(window[circle_mask].mean())
 
 
+def _local_extreme_elevation(
+    lat: float, lon: float, search_radius_px: int = 2, find_max: bool = True
+) -> tuple[float, float, float]:
+    path = _tile_path(lat, lon)
+    if path not in _open_tiles:
+        _open_tiles[path] = rasterio.open(path)
+    src = _open_tiles[path]
+
+    
+    center_row, center_col = src.index(lon, lat)
+    row_start = max(center_row - search_radius_px, 0)
+    col_start = max(center_col - search_radius_px, 0)
+    row_stop = min(center_row + search_radius_px, src.height - 1)
+    col_stop = min(center_col + search_radius_px, src.width - 1)
+
+    window = src.read(1, window=((row_start, row_stop + 1), (col_start, col_stop + 1)))
+
+    idx = np.unravel_index(window.argmax() if find_max else window.argmin(), window.shape)
+    extreme_row = row_start + idx[0]
+    extreme_col = col_start + idx[1]
+    extreme_elevation = float(window[idx])
+
+    extreme_lon, extreme_lat = src.xy(extreme_row, extreme_col)
+    return extreme_lat, extreme_lon, extreme_elevation
+
+
+def compute_prominence_features(profile: pd.DataFrame) -> dict:
+    trail_peak = profile.loc[profile["elevation"].idxmax()]
+    trail_low = profile.loc[profile["elevation"].idxmin()]
+
+    # the trail's own resampled points might land slightly off the true
+    # nearby high/low point -- refine with a small local search before
+    # measuring against the (much larger radius) surrounding terrain
+    peak_lat, peak_lon, peak_elev = _local_extreme_elevation(
+        trail_peak["lat"], trail_peak["lon"], find_max=True
+    )
+    low_lat, low_lon, low_elev = _local_extreme_elevation(
+        trail_low["lat"], trail_low["lon"], find_max=False
+    )
+
+    peak_surrounding = sample_surrounding_elevation(peak_lat, peak_lon)
+    low_surrounding = sample_surrounding_elevation(low_lat, low_lon)
+
+    return {
+        "peak_elevation_m": peak_elev,
+        "peak_prominence_m": peak_elev - peak_surrounding,
+        "low_elevation_m": low_elev,
+        "low_relative_m": low_elev - low_surrounding,
+    }
+
+
+def resample_trail(
+    geometry: LineString | MultiLineString, step_m: float = 90.0
+) -> list[pd.DataFrame]:
+    # always return a list of per-piece profiles, even for a single
+    # LineString (a list of one) -- keeps every caller consistent whether
+    # or not a trail fully merged into one continuous line
+    pieces = geometry.geoms if geometry.geom_type == "MultiLineString" else [geometry]
+    return [resample_elevation_profile(piece, step_m) for piece in pieces]
+
+
 def resample_elevation_profile(line: LineString, step_m: float = 90.0) -> pd.DataFrame:
     coords = list(line.coords)
     lons = [c[0] for c in coords]
@@ -90,6 +154,12 @@ def resample_elevation_profile(line: LineString, step_m: float = 90.0) -> pd.Dat
 
     total_distance = cumulative_distance_m[-1]
     distance_marks = np.arange(0, total_distance, step_m)
+    # always include the true endpoint -- otherwise the final partial
+    # segment (< step_m) is silently dropped for every trail, and trails
+    # shorter than step_m end up with only a single sample point (making
+    # grade variability undefined, since there's no second point to diff against)
+    if total_distance > 0 and (len(distance_marks) == 0 or distance_marks[-1] < total_distance):
+        distance_marks = np.append(distance_marks, total_distance)
 
     resampled_lon = np.interp(distance_marks, cumulative_distance_m, lons)
     resampled_lat = np.interp(distance_marks, cumulative_distance_m, lats)
@@ -107,17 +177,28 @@ def resample_elevation_profile(line: LineString, step_m: float = 90.0) -> pd.Dat
     )
 
 
-def compute_gain_and_grade_stats(profile: pd.DataFrame) -> dict:
-    elevation = profile["elevation"].to_numpy()
-    distance = profile["distance_m"].to_numpy()
+def compute_gain_and_grade_stats(profiles: list[pd.DataFrame]) -> dict:
+    total_gain_m = 0.0
+    all_grades = []
 
-    rise = np.diff(elevation)
-    run = np.diff(distance)
+    for profile in profiles:
+        elevation = profile["elevation"].to_numpy()
+        distance = profile["distance_m"].to_numpy()
 
-    gain_m = rise[rise > 0].sum()
-    grade = rise / run
+        # diff *within* this piece only -- never across a gap between
+        # separate pieces, same principle as the GPX segment-boundary fix
+        rise = np.diff(elevation)
+        run = np.diff(distance)
+
+        total_gain_m += rise[rise > 0].sum()
+        all_grades.append(rise / run)
+
+    # pool every piece's grade values together before taking the std, so a
+    # trail's variability reflects its whole length, not an average of
+    # per-piece averages (which would understate variability between pieces)
+    pooled_grades = np.concatenate(all_grades)
 
     return {
-        "elevation_gain_m": float(gain_m),
-        "grade_std": float(np.std(grade)),
+        "elevation_gain_m": float(total_gain_m),
+        "grade_std": float(np.std(pooled_grades)),
     }
