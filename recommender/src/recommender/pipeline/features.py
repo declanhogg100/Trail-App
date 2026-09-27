@@ -41,4 +41,9 @@ def compute_trail_features(trail: pd.Series) -> dict:
         **prominence,
         "tree_cover_pct": tree_pct,
         **biome,
+        # stored for location-based search (e.g. "near Big Sur"), not fed
+        # into the similarity model -- two trails being geographically close
+        # says nothing about whether they're similar in character
+        "lat": midpoint.y,
+        "lon": midpoint.x,
     }

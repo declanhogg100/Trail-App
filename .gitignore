@@ -28,3 +28,6 @@ time_estimator/data/hikr/*.parquet
 # pipeline scripts, not meant to be version-controlled
 recommender/cache/
 recommender/data/
+
+# local SQLite database -- user accounts/data, not source
+api/data/

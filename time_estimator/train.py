@@ -1,3 +1,4 @@
+import pickle
 import time
 
 import numpy as np
@@ -141,5 +142,23 @@ for epoch in range(NUM_EPOCHS):
     )
 
 torch.save(model.state_dict(), "data/hikr/gru_time_estimator.pt")
+
+# everything inference needs beyond the model weights themselves -- none of
+# this was persisted before, so a fresh process had no way to reproduce the
+# exact normalization the model was trained under
+inference_stats = {
+    "feature_mean": feature_mean,
+    "feature_std": feature_std,
+    "target_mean": target_mean,
+    "target_std": target_std,
+    "user_pace_mean": user_pace_mean,
+    "user_pace_std": user_pace_std,
+    "bucket_mean_pace": bucket_mean_pace,
+    "global_mean_pace": global_mean_pace,
+}
+with open("data/hikr/inference_stats.pkl", "wb") as f:
+    pickle.dump(inference_stats, f)
+
 print("---")
 print("saved model to data/hikr/gru_time_estimator.pt")
+print("saved inference stats to data/hikr/inference_stats.pkl")
