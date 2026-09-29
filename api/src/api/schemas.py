@@ -31,6 +31,18 @@ class NearbyTrail(TrailSummary):
     distance_km: float
 
 
+class TrailMapMarker(BaseModel):
+    osm_id: int
+    name: str
+    distance_m: float
+    start: list[float]
+
+
+class TrailGeometry(BaseModel):
+    osm_id: int
+    lines: list[list[list[float]]]
+
+
 class RecommendationItem(BaseModel):
     osm_id: int
     name: str

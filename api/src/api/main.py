@@ -3,6 +3,7 @@ from pathlib import Path
 
 import jwt
 from fastapi import Depends, FastAPI, HTTPException
+from recommender.geometry_store import TrailGeometryStore
 from recommender.inference import TrailRecommender
 from sqlalchemy.orm import Session
 from time_estimator.inference import TimeEstimator
@@ -28,7 +29,9 @@ from api.schemas import (
     RecommendationItem,
     SessionResponse,
     TrailDetail,
+    TrailGeometry,
     TrailListResponse,
+    TrailMapMarker,
     TrailSummary,
 )
 
@@ -58,6 +61,9 @@ async def lifespan(app: FastAPI):
         model_path=_RECOMMENDER_DATA / "trail_encoder.pt",
         stats_path=_RECOMMENDER_DATA / "feature_stats.pkl",
     )
+    models["geometry_store"] = TrailGeometryStore(
+        geometries_path=_RECOMMENDER_DATA / "trail_geometries.parquet",
+    )
     models["time_estimator"] = TimeEstimator(
         model_path=_TIME_ESTIMATOR_DATA / "gru_time_estimator.pt",
         stats_path=_TIME_ESTIMATOR_DATA / "inference_stats.pkl",
@@ -77,6 +83,19 @@ def list_trails(search: str | None = None, limit: int = 50, offset: int = 0):
 @app.get("/trails/near", response_model=list[NearbyTrail])
 def trails_near(lat: float, lon: float, radius_km: float = 50.0, limit: int = 20):
     return models["recommender"].near(lat, lon, radius_km=radius_km, limit=limit)
+
+
+@app.get("/trails/map", response_model=list[TrailMapMarker])
+def trails_map(min_lon: float, min_lat: float, max_lon: float, max_lat: float):
+    return models["geometry_store"].markers_in_bbox(min_lon, min_lat, max_lon, max_lat)
+
+
+@app.get("/trails/{osm_id}/geometry", response_model=TrailGeometry)
+def get_trail_geometry(osm_id: int):
+    lines = models["geometry_store"].get_lines(osm_id)
+    if lines is None:
+        raise HTTPException(status_code=404, detail=f"no trail geometry for osm_id {osm_id}")
+    return {"osm_id": osm_id, "lines": lines}
 
 
 @app.get("/trails/{osm_id}", response_model=TrailDetail)

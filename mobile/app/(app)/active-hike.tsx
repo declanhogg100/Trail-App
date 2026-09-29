@@ -1,18 +1,45 @@
-import { useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { router } from 'expo-router';
-import { logHike } from '../../src/api';
+import { AppleMaps, GoogleMaps } from 'expo-maps';
+import { getTrailGeometry, logHike } from '../../src/api';
 import { useActiveHike } from '../../src/activeHike';
 import { formatElapsed, formatPace, metersToFeet, metersToMiles } from '../../src/format';
+
+const TRAIL_COLOR = '#2e7d32';
+// the walked path needs to read as clearly distinct from the planned trail
+// route at a glance, so it uses a different hue entirely rather than a
+// shade of the same green
+const WALKED_COLOR = '#1e88e5';
 
 type FinishedSummary = { distanceM: number; elapsedS: number; saveError: string | null };
 
 export default function ActiveHikeScreen() {
-  const { status, trailName, distanceM, elevationGainM, elapsedMs, pause, resume, finish } =
+  const { status, trailName, osmId, distanceM, elevationGainM, elapsedMs, pathCoords, currentPosition, pause, resume, finish } =
     useActiveHike();
   const [error, setError] = useState<string | null>(null);
   const [finishing, setFinishing] = useState(false);
   const [summary, setSummary] = useState<FinishedSummary | null>(null);
+  const [trailLines, setTrailLines] = useState<[number, number][][] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      if (osmId == null) return null;
+      try {
+        const geometry = await getTrailGeometry(osmId);
+        return geometry.lines;
+      } catch {
+        return null;
+      }
+    };
+    load().then((lines) => {
+      if (!cancelled) setTrailLines(lines);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [osmId]);
 
   const handlePauseResume = async () => {
     setError(null);
@@ -72,29 +99,83 @@ export default function ActiveHikeScreen() {
     );
   }
 
+  const polylines = [
+    ...(trailLines
+      ? trailLines.map((line) => ({
+          coordinates: line.map(([lon, lat]) => ({ latitude: lat, longitude: lon })),
+          color: TRAIL_COLOR,
+          width: 3,
+        }))
+      : []),
+    ...(pathCoords.length > 1
+      ? [
+          {
+            coordinates: pathCoords.map(([lon, lat]) => ({ latitude: lat, longitude: lon })),
+            color: WALKED_COLOR,
+            width: 4,
+          },
+        ]
+      : []),
+  ];
+
+  // camera starts wherever GPS first fixes, falling back to the trail's own
+  // start point until that first fix arrives -- either way there's always
+  // something reasonable to center on rather than an arbitrary default
+  const initialFocus = currentPosition ?? trailLines?.[0]?.[0] ?? null;
+  const cameraPosition = initialFocus
+    ? { coordinates: { latitude: initialFocus[1], longitude: initialFocus[0] }, zoom: 15 }
+    : undefined;
+
   return (
     <View style={styles.container}>
-      <Text style={styles.trailName}>{trailName}</Text>
-      {status === 'paused' && <Text style={styles.pausedBadge}>PAUSED</Text>}
+      {Platform.OS === 'ios' ? (
+        <AppleMaps.View
+          style={styles.map}
+          cameraPosition={cameraPosition}
+          polylines={polylines}
+          properties={{ isMyLocationEnabled: true }}
+        />
+      ) : (
+        <GoogleMaps.View
+          style={styles.map}
+          cameraPosition={cameraPosition}
+          polylines={polylines}
+          properties={{ isMyLocationEnabled: true }}
+        />
+      )}
 
-      <Text style={styles.timer}>{formatElapsed(elapsedMs)}</Text>
+      <View style={styles.panel}>
+        <View style={styles.panelHeader}>
+          <Text style={styles.trailName} numberOfLines={1}>
+            {trailName}
+          </Text>
+          {status === 'paused' && <Text style={styles.pausedBadge}>PAUSED</Text>}
+        </View>
 
-      <View style={styles.statsRow}>
-        <Stat label="Distance" value={`${metersToMiles(distanceM).toFixed(2)} mi`} />
-        <Stat label="Elevation gain" value={`${Math.round(metersToFeet(elevationGainM))} ft`} />
-        <Stat label="Pace" value={formatPace(elapsedMs, distanceM)} />
+        <View style={styles.statsRow}>
+          <Stat label="Time" value={formatElapsed(elapsedMs)} />
+          <Stat label="Distance" value={`${metersToMiles(distanceM).toFixed(2)} mi`} />
+          <Stat label="Pace" value={formatPace(elapsedMs, distanceM)} />
+          <Stat label="Elev. gain" value={`${Math.round(metersToFeet(elevationGainM))} ft`} />
+        </View>
+
+        {error && <Text style={styles.error}>{error}</Text>}
+
+        <View style={styles.buttonRow}>
+          <Pressable style={styles.pauseButton} onPress={handlePauseResume}>
+            <Text style={styles.pauseButtonText}>{status === 'active' ? 'Pause' : 'Resume'}</Text>
+          </Pressable>
+          <Pressable style={styles.finishButton} onPress={handleFinish} disabled={finishing}>
+            <Text style={styles.finishButtonText}>{finishing ? 'Saving…' : 'Finish'}</Text>
+          </Pressable>
+        </View>
       </View>
 
-      {error && <Text style={styles.error}>{error}</Text>}
-
-      <View style={styles.buttonRow}>
-        <Pressable style={styles.pauseButton} onPress={handlePauseResume}>
-          <Text style={styles.pauseButtonText}>{status === 'active' ? 'Pause' : 'Resume'}</Text>
-        </Pressable>
-        <Pressable style={styles.finishButton} onPress={handleFinish} disabled={finishing}>
-          <Text style={styles.finishButtonText}>{finishing ? 'Saving…' : 'Finish'}</Text>
-        </Pressable>
-      </View>
+      {!currentPosition && (
+        <View style={styles.loadingBadge}>
+          <ActivityIndicator />
+        </View>
+      )}
     </View>
   );
 }
@@ -109,43 +190,70 @@ function Stat({ label, value }: { label: string; value: string }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff', paddingTop: 24, paddingHorizontal: 24 },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 },
+  container: { flex: 1 },
+  map: { flex: 1 },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32, backgroundColor: '#fff' },
   emptyText: { fontSize: 20, fontWeight: '700', marginBottom: 4 },
   emptySubtext: { fontSize: 14, color: '#666', marginBottom: 20, textAlign: 'center' },
-  trailName: { fontSize: 18, fontWeight: '600', textAlign: 'center' },
+  loadingBadge: {
+    position: 'absolute',
+    top: 16,
+    right: 16,
+    backgroundColor: 'white',
+    borderRadius: 20,
+    padding: 8,
+    shadowColor: '#000',
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  panel: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    paddingTop: 12,
+    paddingBottom: 24,
+    paddingHorizontal: 20,
+    shadowColor: '#000',
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  panelHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
+  trailName: { fontSize: 15, fontWeight: '600', maxWidth: '80%' },
   pausedBadge: {
-    alignSelf: 'center',
-    marginTop: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 3,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
     borderRadius: 4,
     backgroundColor: '#f5a623',
     color: '#fff',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
   },
-  timer: { fontSize: 56, fontWeight: '200', textAlign: 'center', marginVertical: 24, fontVariant: ['tabular-nums'] },
-  statsRow: { flexDirection: 'row', justifyContent: 'space-around', marginVertical: 16 },
+  statsRow: { flexDirection: 'row', justifyContent: 'space-around', marginVertical: 12 },
   stat: { alignItems: 'center' },
-  statValue: { fontSize: 22, fontWeight: '700' },
-  statLabel: { fontSize: 12, color: '#666', marginTop: 2 },
-  error: { color: 'red', textAlign: 'center', marginTop: 12 },
-  buttonRow: { flexDirection: 'row', justifyContent: 'space-around', marginTop: 32 },
+  statValue: { fontSize: 18, fontWeight: '700', fontVariant: ['tabular-nums'] },
+  statLabel: { fontSize: 11, color: '#666', marginTop: 2 },
+  error: { color: 'red', textAlign: 'center', marginBottom: 8, fontSize: 13 },
+  buttonRow: { flexDirection: 'row', justifyContent: 'space-around' },
   pauseButton: {
-    paddingVertical: 14,
-    paddingHorizontal: 32,
-    borderRadius: 30,
+    paddingVertical: 10,
+    paddingHorizontal: 28,
+    borderRadius: 24,
     backgroundColor: '#333',
   },
-  pauseButtonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
+  pauseButtonText: { color: '#fff', fontSize: 15, fontWeight: '600' },
   finishButton: {
-    paddingVertical: 14,
-    paddingHorizontal: 32,
-    borderRadius: 30,
+    paddingVertical: 10,
+    paddingHorizontal: 28,
+    borderRadius: 24,
     backgroundColor: '#e0245e',
   },
-  finishButtonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
+  finishButtonText: { color: '#fff', fontSize: 15, fontWeight: '600' },
   secondaryButton: {
     paddingVertical: 10,
     paddingHorizontal: 20,

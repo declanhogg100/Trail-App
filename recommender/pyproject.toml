@@ -6,11 +6,12 @@ readme = "README.md"
 authors = [
     { email = "declanmzhogg@icloud.com" }
 ]
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.13"
 dependencies = [
     "jupyter>=1.1.1",
     "matplotlib>=3.11.1",
     "numpy>=2.5.2",
+    "osmium>=4.3.1",
     "osmnx>=2.1.1",
     "pandas>=3.0.5",
     "pyarrow>=25.0.1",
@@ -20,6 +21,9 @@ dependencies = [
 
 [project.scripts]
 recommender = "recommender:main"
+
+[tool.uv]
+environments = ["sys_platform == 'darwin'"]
 
 [build-system]
 requires = ["uv_build>=0.12.1,<0.13.0"]

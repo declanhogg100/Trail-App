@@ -9,8 +9,7 @@
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.declanhogg.trailapp",
-      "usesAppleSignIn": true
+      "bundleIdentifier": "com.declanhogg.trailapp"
     },
     "android": {
       "adaptiveIcon": {
@@ -26,7 +25,6 @@
     },
     "plugins": [
       "expo-secure-store",
-      "expo-apple-authentication",
       "expo-router",
       "expo-status-bar",
       "expo-splash-screen",
@@ -36,7 +34,8 @@
           "locationWhenInUsePermission": "Trail App uses your location to find hikes near you and to track active hikes."
         }
       ],
-      "expo-font"
+      "expo-font",
+      "expo-maps"
     ],
     "experiments": {
       "typedRoutes": true

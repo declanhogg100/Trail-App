@@ -35,19 +35,6 @@ N_NEGATIVES = 3
 HARD_NEGATIVE_POOL_FRACTION = 0.1
 
 
-ALL_BIOME_COLUMNS = [
-    "biome_Deserts & Xeric Shrublands",
-    "biome_Mediterranean Forests, Woodlands & Scrub",
-    "biome_Montane Grasslands & Shrublands",
-    "biome_Temperate Broadleaf & Mixed Forests",
-    "biome_Temperate Conifer Forests",
-    "biome_Tropical & Subtropical Coniferous Forests",
-    "biome_Tropical & Subtropical Grasslands, Savannas & Shrublands",
-    "biome_Tropical & Subtropical Moist Broadleaf Forests",
-    "biome_Tundra",
-]
-
-
 def fit_feature_stats(df: pd.DataFrame) -> dict:
     # fit *only* on the trails passed in (e.g. the train split) -- the
     # resulting mean/std are then reused to transform any other split, so no
@@ -58,11 +45,17 @@ def fit_feature_stats(df: pd.DataFrame) -> dict:
     for col in LINEAR_FEATURES:
         numeric[col] = df[col]
 
+    # derived from whatever's actually in this data, not a hardcoded list --
+    # a hardcoded list of biome categories silently went stale once already
+    # (missing 5 of 14 categories after the US expansion added new biomes),
+    # dropping their one-hot signal entirely without any error or warning
+    biome_columns = sorted(f"biome_{b}" for b in df["biome_name"].unique())
+
     return {
         "means": numeric.mean(),
         "stds": numeric.std().replace(0, 1.0),
         "numeric_columns": LOG_FEATURES + LINEAR_FEATURES,
-        "biome_columns": ALL_BIOME_COLUMNS,
+        "biome_columns": biome_columns,
     }
 
 

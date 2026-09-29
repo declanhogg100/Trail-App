@@ -13,9 +13,14 @@ type Status = 'idle' | 'active' | 'paused';
 type ActiveHikeContextValue = {
   status: Status;
   trailName: string | null;
+  osmId: number | null;
   distanceM: number;
   elevationGainM: number;
   elapsedMs: number;
+  // every GPS fix recorded so far, as [lon, lat] pairs -- same coordinate
+  // order used everywhere else in the app (trail geometry, map polylines)
+  pathCoords: [number, number][];
+  currentPosition: [number, number] | null;
   start: (trailName: string, osmId: number) => Promise<void>;
   pause: () => void;
   resume: () => Promise<void>;
@@ -39,9 +44,12 @@ function haversineMeters(lat1: number, lon1: number, lat2: number, lon2: number)
 export function ActiveHikeProvider({ children }: PropsWithChildren) {
   const [status, setStatus] = useState<Status>('idle');
   const [trailName, setTrailName] = useState<string | null>(null);
+  const [osmId, setOsmId] = useState<number | null>(null);
   const [distanceM, setDistanceM] = useState(0);
   const [elevationGainM, setElevationGainM] = useState(0);
   const [elapsedMs, setElapsedMs] = useState(0);
+  const [pathCoords, setPathCoords] = useState<[number, number][]>([]);
+  const [currentPosition, setCurrentPosition] = useState<[number, number] | null>(null);
 
   // refs, not state -- these drive accumulation logic between renders but
   // don't themselves need to trigger a re-render when they change
@@ -53,7 +61,6 @@ export function ActiveHikeProvider({ children }: PropsWithChildren) {
   const startedAtRef = useRef<number>(0);
   const pausedAccumulatedMsRef = useRef<number>(0);
   const pausedAtRef = useRef<number>(0);
-  const osmIdRef = useRef<number | null>(null);
 
   const onLocationUpdate = useCallback((location: Location.LocationObject) => {
     const { latitude, longitude, altitude } = location.coords;
@@ -75,6 +82,8 @@ export function ActiveHikeProvider({ children }: PropsWithChildren) {
     }
 
     lastPositionRef.current = { lat: latitude, lon: longitude, altitude };
+    setCurrentPosition([longitude, latitude]);
+    setPathCoords((coords) => [...coords, [longitude, latitude]]);
   }, []);
 
   const startWatching = useCallback(async () => {
@@ -107,15 +116,17 @@ export function ActiveHikeProvider({ children }: PropsWithChildren) {
   }, []);
 
   const start = useCallback(
-    async (name: string, osmId: number) => {
+    async (name: string, newOsmId: number) => {
       setTrailName(name);
+      setOsmId(newOsmId);
       setDistanceM(0);
       setElevationGainM(0);
       setElapsedMs(0);
+      setPathCoords([]);
+      setCurrentPosition(null);
       lastPositionRef.current = null;
       pausedAccumulatedMsRef.current = 0;
       startedAtRef.current = Date.now();
-      osmIdRef.current = osmId;
 
       await startWatching();
       setStatus('active');
@@ -143,19 +154,34 @@ export function ActiveHikeProvider({ children }: PropsWithChildren) {
 
   const finish = useCallback((): { distanceM: number; elapsedS: number; osmId: number | null } => {
     stopWatching();
-    const result = { distanceM, elapsedS: elapsedMs / 1000, osmId: osmIdRef.current };
+    const result = { distanceM, elapsedS: elapsedMs / 1000, osmId };
     setStatus('idle');
     setTrailName(null);
+    setOsmId(null);
     setDistanceM(0);
     setElevationGainM(0);
     setElapsedMs(0);
-    osmIdRef.current = null;
+    setPathCoords([]);
+    setCurrentPosition(null);
     return result;
-  }, [stopWatching, distanceM, elapsedMs]);
+  }, [stopWatching, distanceM, elapsedMs, osmId]);
 
   return (
     <ActiveHikeContext.Provider
-      value={{ status, trailName, distanceM, elevationGainM, elapsedMs, start, pause, resume, finish }}
+      value={{
+        status,
+        trailName,
+        osmId,
+        distanceM,
+        elevationGainM,
+        elapsedMs,
+        pathCoords,
+        currentPosition,
+        start,
+        pause,
+        resume,
+        finish,
+      }}
     >
       {children}
     </ActiveHikeContext.Provider>

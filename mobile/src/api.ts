@@ -46,6 +46,21 @@ export type RecommendationItem = TrailSummary & {
   because_you_liked_osm_id: number;
 };
 
+export type TrailMapMarker = {
+  osm_id: number;
+  name: string;
+  distance_m: number;
+  start: [number, number];
+};
+
+export type TrailGeometry = {
+  osm_id: number;
+  // one coordinate array per disconnected piece of the trail -- most
+  // trails have exactly one, but a merged trail with a gap in its
+  // source data renders as multiple separate polylines
+  lines: [number, number][][];
+};
+
 export type Hike = {
   id: number;
   distance_m: number;
@@ -135,6 +150,25 @@ export function trailsNear(
   if (params.radiusKm !== undefined) query.set("radius_km", String(params.radiusKm));
   if (params.limit !== undefined) query.set("limit", String(params.limit));
   return request(`/trails/near?${query.toString()}`);
+}
+
+export function trailsInBounds(bounds: {
+  minLon: number;
+  minLat: number;
+  maxLon: number;
+  maxLat: number;
+}): Promise<TrailMapMarker[]> {
+  const query = new URLSearchParams({
+    min_lon: String(bounds.minLon),
+    min_lat: String(bounds.minLat),
+    max_lon: String(bounds.maxLon),
+    max_lat: String(bounds.maxLat),
+  });
+  return request(`/trails/map?${query.toString()}`);
+}
+
+export function getTrailGeometry(osmId: number): Promise<TrailGeometry> {
+  return request(`/trails/${osmId}/geometry`);
 }
 
 // --- liked trails (requires sign-in) ---

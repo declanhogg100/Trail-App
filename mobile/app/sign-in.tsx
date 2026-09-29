@@ -1,28 +1,16 @@
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import * as AppleAuthentication from 'expo-apple-authentication';
 import { useSession } from '../src/session';
 
 export default function SignInScreen() {
-  const { signIn, signInDev } = useSession();
+  const { signInDev } = useSession();
   const [error, setError] = useState<string | null>(null);
 
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Trail App</Text>
-      <AppleAuthentication.AppleAuthenticationButton
-        buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}
-        buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.BLACK}
-        cornerRadius={5}
-        style={styles.appleButton}
-        onPress={async () => {
-          try {
-            await signIn();
-          } catch (err) {
-            setError(String(err));
-          }
-        }}
-      />
+      {/* expo-apple-authentication temporarily uninstalled -- see src/auth.ts.
+          Apple sign-in button removed from local builds until it's reinstalled. */}
       {/* __DEV__ is a React Native global, true in Expo Go / dev builds,
           false in any production build -- this button physically cannot
           ship, so it's safe to leave in the source */}
