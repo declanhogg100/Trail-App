@@ -171,6 +171,27 @@ export function getTrailGeometry(osmId: number): Promise<TrailGeometry> {
   return request(`/trails/${osmId}/geometry`);
 }
 
+export type OfflineTileRef = { z: number; x: number; y: number };
+export type OfflineTileManifest = { osm_id: number; tiles: OfflineTileRef[] };
+
+export function getOfflineTileManifest(osmId: number): Promise<OfflineTileManifest> {
+  return request(`/trails/${osmId}/offline-tiles`);
+}
+
+// used with File.downloadFileAsync, not the request() helper -- that's a
+// direct binary download, not a JSON API call
+export function offlineTileUrl(osmId: number, tile: OfflineTileRef): string {
+  return `${API_BASE_URL}/trails/${osmId}/offline-tiles/${tile.z}/${tile.x}/${tile.y}.png`;
+}
+
+// a {z}/{x}/{y} URL template (not a single tile URL) -- handed straight to
+// MapLibre's RasterSource so it can fetch tiles live, one at a time, while
+// you have signal. The same backend endpoint also renders+caches on first
+// request, so this works even for a trail that was never bulk-downloaded.
+export function offlineTileUrlTemplate(osmId: number): string {
+  return `${API_BASE_URL}/trails/${osmId}/offline-tiles/{z}/{x}/{y}.png`;
+}
+
 // --- liked trails (requires sign-in) ---
 
 export function listLikedTrails(): Promise<TrailSummary[]> {
@@ -201,6 +222,10 @@ export function logHike(distanceM: number, movingTimeS: number, osmId?: number):
   });
 }
 
+export function deleteHike(id: number): Promise<void> {
+  return request(`/me/hikes/${id}`, { method: "DELETE" });
+}
+
 // --- model-backed endpoints (require sign-in; read liked trails / hike
 // history server-side rather than taking them as request parameters) ---
 
@@ -213,4 +238,8 @@ export function estimateTime(gpx: string): Promise<EstimateTimeResponse> {
     method: "POST",
     body: JSON.stringify({ gpx }),
   });
+}
+
+export function estimateTrailTime(osmId: number): Promise<EstimateTimeResponse> {
+  return request(`/trails/${osmId}/estimate-time`);
 }

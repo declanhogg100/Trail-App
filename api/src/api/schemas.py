@@ -43,6 +43,17 @@ class TrailGeometry(BaseModel):
     lines: list[list[list[float]]]
 
 
+class OfflineTileRef(BaseModel):
+    z: int
+    x: int
+    y: int
+
+
+class OfflineTileManifest(BaseModel):
+    osm_id: int
+    tiles: list[OfflineTileRef]
+
+
 class RecommendationItem(BaseModel):
     osm_id: int
     name: str

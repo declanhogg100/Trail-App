@@ -28,8 +28,17 @@ export async function getCurrentLocation(): Promise<{ lat: number; lon: number }
     throw new Error('Location permission is required to find hikes near you');
   }
 
-  const position = await Location.getCurrentPositionAsync({
-    accuracy: Location.Accuracy.Balanced,
-  });
-  return { lat: position.coords.latitude, lon: position.coords.longitude };
+  try {
+    const position = await Location.getCurrentPositionAsync({
+      accuracy: Location.Accuracy.Balanced,
+    });
+    return { lat: position.coords.latitude, lon: position.coords.longitude };
+  } catch {
+    // getCurrentPositionAsync throws a raw native CoreLocation/FusedLocation
+    // exception on failure (e.g. kCLErrorDomain error 0, "location unknown")
+    // -- happens on a real device with no GPS fix (indoors, etc.), and
+    // reliably on the iOS Simulator whenever no location is configured.
+    // Normalize to one clean, user-facing message either way.
+    throw new Error("Couldn't determine your current location. Make sure location services are enabled.");
+  }
 }

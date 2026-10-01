@@ -3,6 +3,7 @@ import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from '
 import { router, useFocusEffect } from 'expo-router';
 import { ApiError, getRecommendations, NearbyTrail, RecommendationItem, trailsNear } from '../../src/api';
 import { getCurrentLocation } from '../../src/location';
+import { colors } from '../../src/theme';
 
 type ResultItem = RecommendationItem | NearbyTrail;
 
@@ -14,7 +15,6 @@ export default function ExploreScreen() {
   const [items, setItems] = useState<ResultItem[]>([]);
   const [mode, setMode] = useState<'recommended' | 'nearby' | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
 
   // refetches every time this tab becomes focused, not just on first mount --
   // liking a trail on the detail screen and coming back here should be able
@@ -25,7 +25,6 @@ export default function ExploreScreen() {
 
       (async () => {
         setLoading(true);
-        setError(null);
         try {
           const recs = await getRecommendations(20);
           if (!cancelled) {
@@ -42,11 +41,11 @@ export default function ExploreScreen() {
                 setItems(nearby);
                 setMode('nearby');
               }
-            } catch (locErr) {
-              if (!cancelled) setError(String(locErr));
+            } catch {
+              // no location available either (denied permission, no GPS fix,
+              // offline) -- falls through to an empty list rather than a
+              // banner explaining why
             }
-          } else if (!cancelled) {
-            setError(String(err));
           }
         } finally {
           if (!cancelled) setLoading(false);
@@ -70,8 +69,7 @@ export default function ExploreScreen() {
         </Text>
       )}
 
-      {loading && <ActivityIndicator style={styles.spinner} />}
-      {error && <Text style={styles.error}>{error}</Text>}
+      {loading && <ActivityIndicator style={styles.spinner} color={colors.maroonLight} />}
 
       <FlatList
         style={styles.list}
@@ -95,12 +93,11 @@ export default function ExploreScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff', paddingTop: 16, paddingHorizontal: 16 },
-  subtitle: { fontSize: 13, color: '#666', marginBottom: 12 },
+  container: { flex: 1, backgroundColor: colors.background, paddingTop: 16, paddingHorizontal: 16 },
+  subtitle: { fontSize: 13, color: colors.textSecondary, marginBottom: 12 },
   spinner: { marginTop: 8 },
-  error: { color: 'red', marginBottom: 12 },
   list: { flex: 1 },
-  row: { paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: '#ddd' },
-  name: { fontSize: 16, fontWeight: '600' },
-  meta: { fontSize: 13, color: '#666', marginTop: 2 },
+  row: { paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border },
+  name: { fontSize: 16, fontWeight: '600', color: colors.text },
+  meta: { fontSize: 13, color: colors.textSecondary, marginTop: 2 },
 });

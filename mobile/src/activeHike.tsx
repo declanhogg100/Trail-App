@@ -1,8 +1,12 @@
 import * as Location from 'expo-location';
+import * as TaskManager from 'expo-task-manager';
+import { haversineMeters } from './geo';
+import { syncPendingHikes } from './pendingHikes';
 import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useRef,
   useState,
   type PropsWithChildren,
@@ -24,22 +28,40 @@ type ActiveHikeContextValue = {
   start: (trailName: string, osmId: number) => Promise<void>;
   pause: () => void;
   resume: () => Promise<void>;
-  finish: () => { distanceM: number; elapsedS: number; osmId: number | null };
+  finish: () => {
+    distanceM: number;
+    elapsedS: number;
+    elevationGainM: number;
+    osmId: number | null;
+    trailName: string | null;
+  };
 };
 
 const ActiveHikeContext = createContext<ActiveHikeContextValue | null>(null);
 
-const EARTH_RADIUS_M = 6371000;
+// a hiking app's whole reason to track location at all is to record a route
+// that keeps recording after the screen locks -- nobody keeps their phone
+// unlocked and the app open for a whole hike, so background-capable
+// tracking is the only mode this app supports; there's no foreground-only
+// fallback to fall back to
+const LOCATION_TASK_NAME = 'trail-app-background-location';
 
-function haversineMeters(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const toRad = (deg: number) => (deg * Math.PI) / 180;
-  const dLat = toRad(lat2 - lat1);
-  const dLon = toRad(lon2 - lon1);
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
-  return 2 * EARTH_RADIUS_M * Math.asin(Math.sqrt(a));
-}
+// TaskManager requires this defined at module scope, not inside a
+// component, so it's registered every time the app launches (including a
+// relaunch the OS triggers in the background purely to deliver a location
+// update). Its closure can't reach into a particular component instance's
+// state directly, so it forwards each update to whichever handler
+// ActiveHikeProvider has currently registered below.
+let activeLocationHandler: ((location: Location.LocationObject) => void) | null = null;
+
+TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
+  if (error || !data) return;
+  const { locations } = data as { locations: Location.LocationObject[] };
+  for (const location of locations) {
+    activeLocationHandler?.(location);
+  }
+});
+
 
 export function ActiveHikeProvider({ children }: PropsWithChildren) {
   const [status, setStatus] = useState<Status>('idle');
@@ -56,7 +78,6 @@ export function ActiveHikeProvider({ children }: PropsWithChildren) {
   const lastPositionRef = useRef<{ lat: number; lon: number; altitude: number | null } | null>(
     null
   );
-  const subscriptionRef = useRef<Location.LocationSubscription | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const startedAtRef = useRef<number>(0);
   const pausedAccumulatedMsRef = useRef<number>(0);
@@ -86,29 +107,62 @@ export function ActiveHikeProvider({ children }: PropsWithChildren) {
     setPathCoords((coords) => [...coords, [longitude, latitude]]);
   }, []);
 
+  // ActiveHikeProvider wraps the whole app and is never unmounted during
+  // normal use, so this effectively registers once for the app's lifetime
+  // -- but it's still done via effect (not a plain module assignment)
+  // so it's correctly re-pointed if this ever did remount
+  useEffect(() => {
+    activeLocationHandler = onLocationUpdate;
+    return () => {
+      activeLocationHandler = null;
+    };
+  }, [onLocationUpdate]);
+
+  // catches the case where a hike finished offline, got queued, and the
+  // user reopens the app (now with a connection) without happening to
+  // visit the History tab first -- History's own focus effect covers the
+  // more common path, this is the belt-and-suspenders one-time fallback
+  useEffect(() => {
+    syncPendingHikes().catch(() => {});
+  }, []);
+
   const startWatching = useCallback(async () => {
-    const { status: permissionStatus } = await Location.requestForegroundPermissionsAsync();
-    if (permissionStatus !== 'granted') {
+    // foreground permission is a required stepping stone to requesting
+    // background permission -- iOS/Android won't grant "Always" without it
+    // already granted -- not a separate tracking mode of its own
+    const { status: fgStatus } = await Location.requestForegroundPermissionsAsync();
+    if (fgStatus !== 'granted') {
       throw new Error('Location permission is required to track a hike');
     }
 
-    subscriptionRef.current = await Location.watchPositionAsync(
-      {
-        accuracy: Location.Accuracy.BestForNavigation,
-        distanceInterval: 5, // meters -- ignore GPS jitter smaller than this
-        timeInterval: 2000,
+    const { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
+    if (bgStatus !== 'granted') {
+      throw new Error(
+        '"Always" location access is required to track a hike, so recording continues while your phone is locked. Enable it in Settings and try again.'
+      );
+    }
+
+    await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
+      accuracy: Location.Accuracy.BestForNavigation,
+      distanceInterval: 5, // meters -- ignore GPS jitter smaller than this
+      timeInterval: 2000,
+      activityType: Location.ActivityType.Fitness,
+      showsBackgroundLocationIndicator: true,
+      pausesUpdatesAutomatically: false,
+      foregroundService: {
+        notificationTitle: 'Trail App',
+        notificationBody: 'Tracking your hike in the background',
       },
-      onLocationUpdate
-    );
+    });
 
     timerRef.current = setInterval(() => {
       setElapsedMs(Date.now() - startedAtRef.current - pausedAccumulatedMsRef.current);
     }, 1000);
-  }, [onLocationUpdate]);
+  }, []);
 
-  const stopWatching = useCallback(() => {
-    subscriptionRef.current?.remove();
-    subscriptionRef.current = null;
+  const stopWatching = useCallback(async () => {
+    const isRegistered = await TaskManager.isTaskRegisteredAsync(LOCATION_TASK_NAME);
+    if (isRegistered) await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
@@ -135,7 +189,11 @@ export function ActiveHikeProvider({ children }: PropsWithChildren) {
   );
 
   const pause = useCallback(() => {
-    stopWatching();
+    // fire-and-forget: pause() is used directly as a button handler and
+    // needs to stay synchronous. The native task teardown finishing a beat
+    // later doesn't matter -- nothing re-reads tracking state until the
+    // next start()/resume() call, well after this resolves in practice.
+    void stopWatching();
     pausedAtRef.current = Date.now();
     setStatus('paused');
   }, [stopWatching]);
@@ -152,9 +210,9 @@ export function ActiveHikeProvider({ children }: PropsWithChildren) {
     setStatus('active');
   }, [startWatching]);
 
-  const finish = useCallback((): { distanceM: number; elapsedS: number; osmId: number | null } => {
-    stopWatching();
-    const result = { distanceM, elapsedS: elapsedMs / 1000, osmId };
+  const finish = useCallback(() => {
+    void stopWatching(); // see pause() -- same fire-and-forget reasoning
+    const result = { distanceM, elapsedS: elapsedMs / 1000, elevationGainM, osmId, trailName };
     setStatus('idle');
     setTrailName(null);
     setOsmId(null);
@@ -164,7 +222,7 @@ export function ActiveHikeProvider({ children }: PropsWithChildren) {
     setPathCoords([]);
     setCurrentPosition(null);
     return result;
-  }, [stopWatching, distanceM, elapsedMs, osmId]);
+  }, [stopWatching, distanceM, elapsedMs, elevationGainM, osmId, trailName]);
 
   return (
     <ActiveHikeContext.Provider

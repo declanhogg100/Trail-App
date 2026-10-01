@@ -1,10 +1,9 @@
-import { useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSession } from '../src/session';
+import { colors } from '../src/theme';
 
 export default function SignInScreen() {
   const { signInDev } = useSession();
-  const [error, setError] = useState<string | null>(null);
 
   return (
     <View style={styles.container}>
@@ -20,15 +19,14 @@ export default function SignInScreen() {
           onPress={async () => {
             try {
               await signInDev();
-            } catch (err) {
-              setError(String(err));
+            } catch {
+              Alert.alert('Sign-in failed', 'Is the backend running?');
             }
           }}
         >
           <Text style={styles.devButtonText}>Continue as test user (dev only)</Text>
         </Pressable>
       )}
-      {error && <Text style={styles.error}>{error}</Text>}
     </View>
   );
 }
@@ -36,14 +34,13 @@ export default function SignInScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: colors.background,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 16,
   },
-  title: { fontSize: 28, fontWeight: '700', marginBottom: 24 },
-  error: { color: 'red', marginTop: 12 },
+  title: { fontSize: 28, fontWeight: '700', marginBottom: 24, color: colors.text },
   appleButton: { width: 200, height: 44 },
   devButton: { marginTop: 16, padding: 8 },
-  devButtonText: { color: '#999', fontSize: 13, textDecorationLine: 'underline' },
+  devButtonText: { color: colors.textMuted, fontSize: 13, textDecorationLine: 'underline' },
 });

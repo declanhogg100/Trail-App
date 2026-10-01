@@ -1,7 +1,9 @@
 import { useEffect } from 'react';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
+import { StatusBar } from 'expo-status-bar';
 import { SessionProvider, useSession } from '../src/session';
+import { colors } from '../src/theme';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -21,14 +23,22 @@ function RootNavigator() {
   }
 
   return (
-    <Stack screenOptions={{ headerShown: false }}>
-      <Stack.Protected guard={isSignedIn}>
-        <Stack.Screen name="(app)" />
-      </Stack.Protected>
-      <Stack.Protected guard={!isSignedIn}>
-        <Stack.Screen name="sign-in" />
-      </Stack.Protected>
-    </Stack>
+    <>
+      <StatusBar style="light" />
+      <Stack
+        screenOptions={{
+          headerShown: false,
+          contentStyle: { backgroundColor: colors.background },
+        }}
+      >
+        <Stack.Protected guard={isSignedIn}>
+          <Stack.Screen name="(app)" />
+        </Stack.Protected>
+        <Stack.Protected guard={!isSignedIn}>
+          <Stack.Screen name="sign-in" />
+        </Stack.Protected>
+      </Stack>
+    </>
   );
 }
 

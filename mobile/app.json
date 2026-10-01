@@ -31,11 +31,14 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "Trail App uses your location to find hikes near you and to track active hikes."
+          "locationWhenInUsePermission": "Trail App uses your location to find hikes near you and to track active hikes.",
+          "locationAlwaysAndWhenInUsePermission": "Trail App tracks your hike's route and distance in the background, even while your phone is locked or the app isn't in view.",
+          "isIosBackgroundLocationEnabled": true
         }
       ],
       "expo-font",
-      "expo-maps"
+      "expo-maps",
+      "@maplibre/maplibre-react-native"
     ],
     "experiments": {
       "typedRoutes": true

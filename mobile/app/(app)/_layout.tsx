@@ -1,6 +1,8 @@
-import { Tabs } from 'expo-router';
+import { Pressable } from 'react-native';
+import { router, Tabs } from 'expo-router';
 import { FontAwesome } from '@expo/vector-icons';
 import { ActiveHikeProvider } from '../../src/activeHike';
+import { colors } from '../../src/theme';
 
 export default function AppLayout() {
   return (
@@ -9,7 +11,17 @@ export default function AppLayout() {
     // mid-hike, rather than being torn down when the Active Hike screen
     // itself unmounts
     <ActiveHikeProvider>
-      <Tabs screenOptions={{ headerShown: true }}>
+      <Tabs
+        screenOptions={{
+          headerShown: true,
+          headerStyle: { backgroundColor: colors.surface },
+          headerTintColor: colors.text,
+          headerShadowVisible: false,
+          tabBarStyle: { backgroundColor: colors.surface, borderTopColor: colors.border },
+          tabBarActiveTintColor: colors.maroonLight,
+          tabBarInactiveTintColor: colors.textMuted,
+        }}
+      >
         <Tabs.Screen
           name="index"
           options={{
@@ -29,6 +41,11 @@ export default function AppLayout() {
           options={{
             title: 'Liked',
             tabBarIcon: ({ color, size }) => <FontAwesome name="heart" size={size} color={color} />,
+            headerRight: () => (
+              <Pressable onPress={() => router.push('/downloads')} hitSlop={12} style={{ marginRight: 16 }}>
+                <FontAwesome name="cloud-download" size={20} color={colors.text} />
+              </Pressable>
+            ),
           }}
         />
         <Tabs.Screen
@@ -48,6 +65,12 @@ export default function AppLayout() {
         {/* pushed from within a tab (e.g. tapping a search or explore
             result), not itself a destination in the tab bar */}
         <Tabs.Screen name="trail/[osmId]" options={{ href: null }} />
+        {/* reached via the download icon in Liked's header, not a tab of
+            its own -- see the headerRight above */}
+        <Tabs.Screen
+          name="downloads"
+          options={{ href: null, title: 'Downloaded Trails' }}
+        />
       </Tabs>
     </ActiveHikeProvider>
   );

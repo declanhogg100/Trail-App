@@ -18,6 +18,16 @@ export function formatElapsed(ms: number): string {
   return hours > 0 ? `${hours}:${pad(minutes)}:${pad(seconds)}` : `${minutes}:${pad(seconds)}`;
 }
 
+// for describing an estimated duration (e.g. "3h 45m") -- distinct from
+// formatElapsed's stopwatch-style "H:MM:SS", which reads oddly for an
+// estimate ("3:45:00" looks like a clock time, not "about 3h45")
+export function formatDuration(seconds: number): string {
+  const totalMinutes = Math.round(seconds / 60);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return hours === 0 ? `${minutes}m` : `${hours}h ${minutes}m`;
+}
+
 export function formatPace(elapsedMs: number, distanceM: number): string {
   const miles = metersToMiles(distanceM);
   if (miles < 0.05) return '--:--'; // not enough distance yet for a meaningful pace

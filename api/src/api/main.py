@@ -2,9 +2,11 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import jwt
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Response
 from recommender.geometry_store import TrailGeometryStore
 from recommender.inference import TrailRecommender
+from recommender.offline_tile_store import OfflineTileStore
+from recommender.profile_store import TrailProfileStore
 from sqlalchemy.orm import Session
 from time_estimator.inference import TimeEstimator
 
@@ -26,6 +28,7 @@ from api.schemas import (
     HikeResponse,
     LikeTrailRequest,
     NearbyTrail,
+    OfflineTileManifest,
     RecommendationItem,
     SessionResponse,
     TrailDetail,
@@ -64,6 +67,10 @@ async def lifespan(app: FastAPI):
     models["geometry_store"] = TrailGeometryStore(
         geometries_path=_RECOMMENDER_DATA / "trail_geometries.parquet",
     )
+    models["profile_store"] = TrailProfileStore(
+        profiles_path=_RECOMMENDER_DATA / "trail_elevation_profiles.parquet",
+    )
+    models["offline_tile_store"] = OfflineTileStore()
     models["time_estimator"] = TimeEstimator(
         model_path=_TIME_ESTIMATOR_DATA / "gru_time_estimator.pt",
         stats_path=_TIME_ESTIMATOR_DATA / "inference_stats.pkl",
@@ -96,6 +103,32 @@ def get_trail_geometry(osm_id: int):
     if lines is None:
         raise HTTPException(status_code=404, detail=f"no trail geometry for osm_id {osm_id}")
     return {"osm_id": osm_id, "lines": lines}
+
+
+@app.get("/trails/{osm_id}/offline-tiles", response_model=OfflineTileManifest)
+def get_offline_tile_manifest(osm_id: int):
+    lines = models["geometry_store"].get_lines(osm_id)
+    if lines is None:
+        raise HTTPException(status_code=404, detail=f"no trail geometry for osm_id {osm_id}")
+    # renders and disk-caches on first request for this trail (a few
+    # seconds), just returns the cached list on every request after
+    tiles = models["offline_tile_store"].get_manifest(osm_id, lines)
+    return {"osm_id": osm_id, "tiles": tiles}
+
+
+@app.get("/trails/{osm_id}/offline-tiles/{z}/{x}/{y}.png")
+def get_offline_tile(osm_id: int, z: int, x: int, y: int):
+    lines = models["geometry_store"].get_lines(osm_id)
+    if lines is None:
+        raise HTTPException(status_code=404, detail=f"no trail geometry for osm_id {osm_id}")
+    # renders+caches this trail's tiles on first request if they aren't
+    # already -- lets the map use this endpoint as a live source (fetching
+    # tiles one at a time while you have signal) for a trail that was never
+    # bulk-downloaded ahead of time, not just for the download flow
+    tile_bytes = models["offline_tile_store"].get_tile_bytes(osm_id, z, x, y, lines)
+    if tile_bytes is None:
+        raise HTTPException(status_code=404, detail="no tile at this z/x/y for this trail")
+    return Response(content=tile_bytes, media_type="image/png")
 
 
 @app.get("/trails/{osm_id}", response_model=TrailDetail)
@@ -196,6 +229,14 @@ def log_hike(
     return _to_hike_response(hike)
 
 
+@app.delete("/me/hikes/{hike_id}", status_code=204)
+def delete_hike(hike_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    # scoped to the current user, not just a bare ID lookup -- otherwise one
+    # user could delete another's hike just by guessing/incrementing an id
+    db.query(Hike).filter(Hike.id == hike_id, Hike.user_id == user.id).delete()
+    db.commit()
+
+
 @app.post("/recommend", response_model=list[RecommendationItem])
 def recommend(
     top_k: int = 10, user: User = Depends(get_current_user), db: Session = Depends(get_db)
@@ -207,15 +248,26 @@ def recommend(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+def _previous_hikes(user: User, db: Session) -> list[dict]:
+    return [
+        {"distance_m": h.distance_m, "moving_time_s": h.moving_time_s}
+        for h in db.query(Hike).filter(Hike.user_id == user.id)
+    ]
+
+
 @app.post("/estimate-time", response_model=EstimateTimeResponse)
 def estimate_time(
     request: EstimateTimeRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)
 ):
-    previous_hikes = [
-        {"distance_m": h.distance_m, "moving_time_s": h.moving_time_s}
-        for h in db.query(Hike).filter(Hike.user_id == user.id)
-    ]
     try:
-        return models["time_estimator"].predict(request.gpx, previous_hikes)
+        return models["time_estimator"].predict(request.gpx, _previous_hikes(user, db))
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"failed to parse or estimate hike: {e}")
+
+
+@app.get("/trails/{osm_id}/estimate-time", response_model=EstimateTimeResponse)
+def estimate_trail_time(osm_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    profile = models["profile_store"].get_profile(osm_id)
+    if profile is None:
+        raise HTTPException(status_code=404, detail=f"no elevation profile for osm_id {osm_id}")
+    return models["time_estimator"].predict_from_profile(profile, _previous_hikes(user, db))

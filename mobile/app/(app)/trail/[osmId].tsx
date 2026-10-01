@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { ScrollView, StyleSheet } from 'react-native';
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { TrailDetailContent } from '../../../src/components/TrailDetailContent';
+import { colors } from '../../../src/theme';
 
 export default function TrailDetailScreen() {
   // params from the URL are always strings, even though osm_id is a number
@@ -19,6 +20,6 @@ export default function TrailDetailScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
+  container: { flex: 1, backgroundColor: colors.background },
   content: { padding: 16 },
 });

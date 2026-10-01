@@ -1,13 +1,13 @@
 import { useCallback, useState } from 'react';
-import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { FontAwesome } from '@expo/vector-icons';
 import { listLikedTrails, TrailSummary, unlikeTrail } from '../../src/api';
+import { colors } from '../../src/theme';
 
 export default function LikedScreen() {
   const [trails, setTrails] = useState<TrailSummary[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
 
   // refetches every time this tab becomes focused -- liking a trail from the
   // detail screen should show up here without needing an app restart
@@ -19,9 +19,7 @@ export default function LikedScreen() {
         .then((liked) => {
           if (!cancelled) setTrails(liked);
         })
-        .catch((err) => {
-          if (!cancelled) setError(String(err));
-        })
+        .catch(() => {})
         .finally(() => {
           if (!cancelled) setLoading(false);
         });
@@ -39,23 +37,21 @@ export default function LikedScreen() {
     setTrails((current) => current.filter((t) => t.osm_id !== osmId));
     try {
       await unlikeTrail(osmId);
-    } catch (err) {
-      setError(String(err));
+    } catch {
+      Alert.alert('Couldn’t update', 'Please check your connection and try again.');
     }
   };
 
   if (loading) {
     return (
       <View style={styles.center}>
-        <ActivityIndicator />
+        <ActivityIndicator color={colors.maroonLight} />
       </View>
     );
   }
 
   return (
     <View style={styles.container}>
-      {error && <Text style={styles.error}>{error}</Text>}
-
       {trails.length === 0 ? (
         <View style={styles.center}>
           <Text style={styles.emptyText}>
@@ -81,7 +77,7 @@ export default function LikedScreen() {
                 onPress={() => handleUnlike(item.osm_id)}
                 hitSlop={8}
               >
-                <FontAwesome name="heart" size={22} color="#e0245e" />
+                <FontAwesome name="heart" size={22} color={colors.maroonLight} />
               </Pressable>
             </View>
           )}
@@ -92,20 +88,19 @@ export default function LikedScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff', paddingTop: 16, paddingHorizontal: 16 },
+  container: { flex: 1, backgroundColor: colors.background, paddingTop: 16, paddingHorizontal: 16 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 },
-  emptyText: { fontSize: 15, color: '#999', textAlign: 'center' },
-  error: { color: 'red', marginBottom: 12 },
+  emptyText: { fontSize: 15, color: colors.textMuted, textAlign: 'center' },
   list: { flex: 1 },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderColor: '#ddd',
+    borderColor: colors.border,
   },
   rowInfo: { flex: 1 },
-  name: { fontSize: 16, fontWeight: '600' },
-  meta: { fontSize: 13, color: '#666', marginTop: 2 },
+  name: { fontSize: 16, fontWeight: '600', color: colors.text },
+  meta: { fontSize: 13, color: colors.textSecondary, marginTop: 2 },
   heartButton: { paddingLeft: 12, paddingVertical: 4 },
 });

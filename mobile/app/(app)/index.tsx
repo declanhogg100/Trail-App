@@ -1,6 +1,7 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Platform,
   Pressable,
   ScrollView,
@@ -21,8 +22,9 @@ import {
   TrailMapMarker,
   TrailSummary,
 } from '../../src/api';
-import { geocodeArea } from '../../src/location';
+import { geocodeArea, getCurrentLocation } from '../../src/location';
 import { TrailDetailContent } from '../../src/components/TrailDetailContent';
+import { colors } from '../../src/theme';
 
 // continental US, zoomed out enough to see the whole country on first open
 const INITIAL_CAMERA = {
@@ -46,6 +48,11 @@ const MAX_LONGITUDE_DELTA_TO_SHOW = 4;
 const MAX_SELECTED_SPAN_DEG = 1.5;
 const MIN_SELECTED_SPAN_DEG = 0.02;
 const SELECTED_SPAN_PADDING = 1.4;
+
+// roughly 10km across (~5km out in every direction) -- the default view once
+// the device's location comes back, instead of staying zoomed out to the
+// whole-country INITIAL_CAMERA
+const NEARBY_SPAN_DEG = 0.09;
 
 type Bounds = { minLon: number; minLat: number; maxLon: number; maxLat: number };
 type ResultItem = TrailSummary | NearbyTrail;
@@ -105,8 +112,6 @@ export default function SearchScreen() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [searchLoading, setSearchLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [geocodeNote, setGeocodeNote] = useState<string | null>(null);
   const [nameMatches, setNameMatches] = useState<TrailSummary[]>([]);
   const [areaMatches, setAreaMatches] = useState<NearbyTrail[]>([]);
   const [areaLabel, setAreaLabel] = useState<string | null>(null);
@@ -125,6 +130,29 @@ export default function SearchScreen() {
         if (lastBoundsRef.current === bounds) setMapLoading(false);
       });
   }, []);
+
+  // zooms in on the device's current location as soon as it's available --
+  // without this the map opens on INITIAL_CAMERA's whole-country view, which
+  // isn't useful until you manually pan/zoom to wherever you actually are
+  useEffect(() => {
+    getCurrentLocation()
+      .then(({ lat, lon }) => {
+        mapRef.current?.setCameraPosition({
+          coordinates: { latitude: lat, longitude: lon },
+          zoom: zoomForSpan(NEARBY_SPAN_DEG),
+        });
+        fetchMarkers({
+          minLon: lon - NEARBY_SPAN_DEG / 2,
+          maxLon: lon + NEARBY_SPAN_DEG / 2,
+          minLat: lat - NEARBY_SPAN_DEG / 2,
+          maxLat: lat + NEARBY_SPAN_DEG / 2,
+        });
+      })
+      .catch(() => {
+        // no permission or no fix -- just stay on the zoomed-out default
+        // rather than blocking the map on a location prompt
+      });
+  }, [fetchMarkers]);
 
   const handleCameraMove = useCallback(
     (event: { coordinates: { latitude?: number; longitude?: number }; latitudeDelta: number; longitudeDelta: number }) => {
@@ -196,8 +224,6 @@ export default function SearchScreen() {
     if (!trimmed) return;
 
     setSearchLoading(true);
-    setError(null);
-    setGeocodeNote(null);
     setAreaLabel(null);
 
     try {
@@ -206,12 +232,12 @@ export default function SearchScreen() {
 
       // geocoding failing (no permission, no network, unrecognized place
       // name) shouldn't block the name-match results above -- area search
-      // is a bonus on top, not a requirement
+      // is a bonus on top, not a requirement, so a failure here is silent
       let location: { lat: number; lon: number } | null = null;
       try {
         location = await geocodeArea(trimmed);
-      } catch (err) {
-        setGeocodeNote(String(err));
+      } catch {
+        // no-op -- see comment above
       }
 
       if (location) {
@@ -221,8 +247,8 @@ export default function SearchScreen() {
       } else {
         setAreaMatches([]);
       }
-    } catch (err) {
-      setError(String(err));
+    } catch {
+      Alert.alert('Search failed', 'Please check your connection and try again.');
     } finally {
       setSearchLoading(false);
     }
@@ -254,7 +280,9 @@ export default function SearchScreen() {
 
   const sections = [
     ...(nameMatches.length > 0 ? [{ title: 'Matching trails', data: nameMatches as ResultItem[] }] : []),
-    ...(areaLabel ? [{ title: `Near "${areaLabel}"`, data: areaMatches as ResultItem[] }] : []),
+    ...(areaLabel && areaMatches.length > 0
+      ? [{ title: `Near "${areaLabel}"`, data: areaMatches as ResultItem[] }]
+      : []),
   ];
 
   return (
@@ -283,7 +311,6 @@ export default function SearchScreen() {
 
       {!searchOpen && !selectedTrail && (
         <Pressable style={styles.searchBar} onPress={() => setSearchOpen(true)}>
-          <FontAwesome name="search" size={16} color="#666" />
           <Text style={styles.searchBarText}>Search a trail name or area</Text>
         </Pressable>
       )}
@@ -295,7 +322,7 @@ export default function SearchScreen() {
       )}
       {!searchOpen && mapLoading && (
         <View style={styles.loadingBadge}>
-          <ActivityIndicator />
+          <ActivityIndicator color={colors.maroonLight} />
         </View>
       )}
 
@@ -303,7 +330,7 @@ export default function SearchScreen() {
         <View style={styles.searchOverlay}>
           <View style={styles.searchHeader}>
             <Pressable style={styles.backButton} onPress={() => setSearchOpen(false)}>
-              <FontAwesome name="arrow-left" size={20} color="#333" />
+              <FontAwesome name="arrow-left" size={20} color={colors.text} />
             </Pressable>
             <TextInput
               style={styles.input}
@@ -316,12 +343,7 @@ export default function SearchScreen() {
             />
           </View>
 
-          {searchLoading && <ActivityIndicator style={styles.spinner} />}
-          {error && <Text style={styles.error}>{error}</Text>}
-          {geocodeNote && <Text style={styles.hint}>{geocodeNote}</Text>}
-          {!searchLoading && areaLabel && areaMatches.length === 0 && (
-            <Text style={styles.hint}>No trails found near &quot;{areaLabel}&quot; in the catalog.</Text>
-          )}
+          {searchLoading && <ActivityIndicator style={styles.spinner} color={colors.maroonLight} />}
 
           <SectionList
             style={styles.list}
@@ -347,7 +369,7 @@ export default function SearchScreen() {
           <View style={styles.detailHeader}>
             <View style={styles.dragHandle} />
             <Pressable style={styles.closeButton} onPress={() => setSelectedTrail(null)}>
-              <FontAwesome name="times" size={20} color="#333" />
+              <FontAwesome name="times" size={20} color={colors.text} />
             </Pressable>
           </View>
           <ScrollView style={styles.detailScroll} contentContainerStyle={styles.detailContent}>
@@ -370,49 +392,43 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: 'white',
+    backgroundColor: colors.surface,
     borderRadius: 24,
     paddingVertical: 12,
     paddingHorizontal: 16,
-    shadowColor: '#000',
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 3,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
   },
-  searchBarText: { color: '#666', fontSize: 15 },
+  searchBarText: { color: colors.textSecondary, fontSize: 15 },
   loadingBadge: {
     position: 'absolute',
     top: 16,
     right: 16,
-    backgroundColor: 'white',
+    backgroundColor: colors.surface,
     borderRadius: 20,
     padding: 8,
-    shadowColor: '#000',
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 3,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
   },
   hintBadge: {
     position: 'absolute',
     top: 74,
     alignSelf: 'center',
-    backgroundColor: 'white',
+    backgroundColor: colors.surface,
     borderRadius: 16,
     paddingVertical: 8,
     paddingHorizontal: 16,
-    shadowColor: '#000',
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 3,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
   },
-  hintText: { color: '#333', fontSize: 13, fontWeight: '600' },
+  hintText: { color: colors.text, fontSize: 13, fontWeight: '600' },
   searchOverlay: {
     position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: '#fff',
+    backgroundColor: colors.background,
     paddingTop: 16,
     paddingHorizontal: 16,
   },
@@ -421,40 +437,37 @@ const styles = StyleSheet.create({
   input: {
     flex: 1,
     borderWidth: 1,
-    borderColor: '#ccc',
+    borderColor: colors.border,
     borderRadius: 8,
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 16,
+    color: colors.text,
   },
   spinner: { marginTop: 8 },
-  error: { color: 'red', marginBottom: 12 },
-  hint: { color: '#999', fontSize: 13, marginBottom: 12 },
   list: { flex: 1 },
   sectionHeader: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#666',
-    backgroundColor: '#fff',
+    color: colors.textSecondary,
+    backgroundColor: colors.background,
     paddingTop: 8,
     paddingBottom: 4,
   },
-  row: { paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: '#ddd' },
-  name: { fontSize: 16, fontWeight: '600' },
-  meta: { fontSize: 13, color: '#666', marginTop: 2 },
+  row: { paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border },
+  name: { fontSize: 16, fontWeight: '600', color: colors.text },
+  meta: { fontSize: 13, color: colors.textSecondary, marginTop: 2 },
   detailSheet: {
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
     height: '50%',
-    backgroundColor: '#fff',
+    backgroundColor: colors.surface,
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
-    shadowColor: '#000',
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    elevation: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
   },
   // an explicit height here matters: closeButton is absolutely positioned
   // and its touch target (padding + icon) overflows past the drag handle's
@@ -463,7 +476,7 @@ const styles = StyleSheet.create({
   // that overflow and swallow taps meant for the button, even though the
   // icon still renders visibly through it.
   detailHeader: { height: 44, alignItems: 'center', paddingTop: 8 },
-  dragHandle: { width: 36, height: 4, borderRadius: 2, backgroundColor: '#ccc' },
+  dragHandle: { width: 36, height: 4, borderRadius: 2, backgroundColor: colors.border },
   closeButton: { position: 'absolute', right: 12, top: 4, padding: 8, zIndex: 1 },
   detailScroll: { flex: 1 },
   detailContent: { padding: 16, paddingTop: 8 },
