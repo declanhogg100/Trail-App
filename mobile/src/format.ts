@@ -9,6 +9,13 @@ export function metersToFeet(m: number): number {
   return m / METERS_PER_FOOT;
 }
 
+// a catalog trail's stored distance_m is the route's one-way length -- a
+// loop already returns you to the start, but an out-and-back trail (e.g.
+// a dead-end spur) means actually hiking it covers that distance twice
+export function hikeDistanceM(distanceM: number, isLoop: boolean): number {
+  return isLoop ? distanceM : distanceM * 2;
+}
+
 export function formatElapsed(ms: number): string {
   const totalSeconds = Math.floor(ms / 1000);
   const hours = Math.floor(totalSeconds / 3600);

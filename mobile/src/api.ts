@@ -17,6 +17,7 @@ export type TrailSummary = {
   osm_id: number;
   name: string;
   distance_m: number;
+  is_loop: boolean;
   elevation_gain_m: number;
   biome_name: string;
 };

@@ -3,6 +3,7 @@ import { ActivityIndicator, Alert, FlatList, Pressable, StyleSheet, Text, View }
 import { router, useFocusEffect } from 'expo-router';
 import { FontAwesome } from '@expo/vector-icons';
 import { listLikedTrails, TrailSummary, unlikeTrail } from '../../src/api';
+import { hikeDistanceM } from '../../src/format';
 import { colors } from '../../src/theme';
 
 export default function LikedScreen() {
@@ -68,8 +69,8 @@ export default function LikedScreen() {
               <Pressable style={styles.rowInfo} onPress={() => router.push(`/trail/${item.osm_id}`)}>
                 <Text style={styles.name}>{item.name}</Text>
                 <Text style={styles.meta}>
-                  {(item.distance_m / 1000).toFixed(1)} km · {Math.round(item.elevation_gain_m)} m gain ·{' '}
-                  {item.biome_name}
+                  {(hikeDistanceM(item.distance_m, item.is_loop) / 1000).toFixed(1)} km ·{' '}
+                  {Math.round(item.elevation_gain_m)} m gain · {item.biome_name}
                 </Text>
               </Pressable>
               <Pressable

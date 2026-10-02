@@ -12,7 +12,7 @@ import {
   unlikeTrail,
 } from '../api';
 import { useActiveHike } from '../activeHike';
-import { formatDuration } from '../format';
+import { formatDuration, hikeDistanceM } from '../format';
 import { haversineMeters } from '../geo';
 import { getCurrentLocation } from '../location';
 import { downloadTrail, getOfflineTrail, isTrailDownloaded, removeOfflineTrail } from '../offlineTrails';
@@ -223,7 +223,11 @@ export function TrailDetailContent({
             value={`${formatDuration(estimate.range_low_seconds)} – ${formatDuration(estimate.range_high_seconds)}`}
           />
         )}
-        <Stat label="Distance" value={`${(trail.distance_m / 1000).toFixed(1)} km`} />
+        <Stat
+          label="Distance"
+          value={`${(hikeDistanceM(trail.distance_m, trail.is_loop) / 1000).toFixed(1)} km`}
+        />
+        <Stat label="Route" value={trail.is_loop ? 'Loop' : 'Out & back'} />
         <Stat label="Elevation gain" value={`${Math.round(trail.elevation_gain_m)} m`} />
         <Stat label="Peak elevation" value={`${Math.round(trail.peak_elevation_m)} m`} />
         <Stat label="Peak prominence" value={`${Math.round(trail.peak_prominence_m)} m`} />

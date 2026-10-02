@@ -7,6 +7,28 @@ from recommender.pipeline.elevation import (
     resample_trail,
 )
 from recommender.pipeline.landcover import compute_tree_cover_pct
+from recommender.pipeline.osm_trails import _GEOD
+
+# a trailhead loop rarely closes to the exact same point (parking lot
+# geometry, GPS snapping) -- treat anything that comes back within this
+# distance of its own start as a loop; anything farther apart is dictated to
+# be an out-and-back (there's no "point to point with a shuttle" case in
+# this catalog, so that's the only other option)
+LOOP_CLOSURE_THRESHOLD_M = 100.0
+
+
+def _is_loop(geometry) -> bool:
+    # a MultiLineString's pieces aren't guaranteed connected/ordered (a gap
+    # in the source data) -- "start" and "end" are still just the first
+    # point of the first piece and the last point of the last piece, same
+    # convention the frontend already uses for a trail's start marker
+    if geometry.geom_type == "MultiLineString":
+        pieces = list(geometry.geoms)
+        start, end = pieces[0].coords[0], pieces[-1].coords[-1]
+    else:
+        start, end = geometry.coords[0], geometry.coords[-1]
+    _, _, closure_distance_m = _GEOD.inv(start[0], start[1], end[0], end[1])
+    return closure_distance_m <= LOOP_CLOSURE_THRESHOLD_M
 
 
 def _representative_point(geometry):
@@ -37,6 +59,7 @@ def compute_trail_features(trail: pd.Series) -> dict:
         "osm_id": trail["osm_id"],
         "name": trail["name"],
         "distance_m": trail["distance_m"],
+        "is_loop": _is_loop(trail["geometry"]),
         **gain_grade,
         **prominence,
         "tree_cover_pct": tree_pct,

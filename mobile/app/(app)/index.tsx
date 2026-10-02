@@ -22,6 +22,7 @@ import {
   TrailMapMarker,
   TrailSummary,
 } from '../../src/api';
+import { hikeDistanceM } from '../../src/format';
 import { geocodeArea, getCurrentLocation } from '../../src/location';
 import { TrailDetailContent } from '../../src/components/TrailDetailContent';
 import { colors } from '../../src/theme';
@@ -33,6 +34,12 @@ const INITIAL_CAMERA = {
 };
 
 const TRAIL_COLOR = '#2e7d32';
+const TRAIL_WIDTH = 4;
+// neither AppleMaps.View nor GoogleMaps.View expose a native outline/casing
+// property on a polyline -- a faint halo is faked by drawing a wider,
+// translucent line of the same color underneath the real one
+const TRAIL_OUTLINE_COLOR = 'rgba(46, 125, 50, 0.35)';
+const TRAIL_OUTLINE_WIDTH = 8;
 const DEBOUNCE_MS = 400;
 // below this zoom level (larger visible area), don't show trails at all --
 // a fully zoomed-out view has way too many candidate trails to usefully
@@ -107,6 +114,15 @@ export default function SearchScreen() {
   const [selectedTrail, setSelectedTrail] = useState<SelectedTrail | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastBoundsRef = useRef<Bounds | null>(null);
+  // the native map view's gesture recognizers aren't necessarily ready the
+  // instant this component mounts -- an imperative setCameraPosition() call
+  // before then can leave pinch/pan gestures unresponsive. These track
+  // whichever of "map ready" (first onCameraMove firing) / "location fixed"
+  // arrives second, so the initial zoom-to-location only ever fires once the
+  // map itself confirms it's actually ready for it.
+  const mapReadyRef = useRef(false);
+  const userLocationRef = useRef<{ lat: number; lon: number } | null>(null);
+  const initialZoomDoneRef = useRef(false);
 
   // --- search overlay state ---
   const [searchOpen, setSearchOpen] = useState(false);
@@ -131,31 +147,48 @@ export default function SearchScreen() {
       });
   }, []);
 
-  // zooms in on the device's current location as soon as it's available --
-  // without this the map opens on INITIAL_CAMERA's whole-country view, which
-  // isn't useful until you manually pan/zoom to wherever you actually are
+  // zooms in on the device's current location as soon as both the location
+  // fix and the map itself are ready -- without this the map opens on
+  // INITIAL_CAMERA's whole-country view, which isn't useful until you
+  // manually pan/zoom to wherever you actually are
+  const maybeApplyInitialZoom = useCallback(() => {
+    if (initialZoomDoneRef.current || !mapReadyRef.current || !userLocationRef.current) return;
+    initialZoomDoneRef.current = true;
+    const { lat, lon } = userLocationRef.current;
+    mapRef.current?.setCameraPosition({
+      coordinates: { latitude: lat, longitude: lon },
+      zoom: zoomForSpan(NEARBY_SPAN_DEG),
+    });
+    fetchMarkers({
+      minLon: lon - NEARBY_SPAN_DEG / 2,
+      maxLon: lon + NEARBY_SPAN_DEG / 2,
+      minLat: lat - NEARBY_SPAN_DEG / 2,
+      maxLat: lat + NEARBY_SPAN_DEG / 2,
+    });
+  }, [fetchMarkers]);
+
   useEffect(() => {
     getCurrentLocation()
       .then(({ lat, lon }) => {
-        mapRef.current?.setCameraPosition({
-          coordinates: { latitude: lat, longitude: lon },
-          zoom: zoomForSpan(NEARBY_SPAN_DEG),
-        });
-        fetchMarkers({
-          minLon: lon - NEARBY_SPAN_DEG / 2,
-          maxLon: lon + NEARBY_SPAN_DEG / 2,
-          minLat: lat - NEARBY_SPAN_DEG / 2,
-          maxLat: lat + NEARBY_SPAN_DEG / 2,
-        });
+        userLocationRef.current = { lat, lon };
+        maybeApplyInitialZoom();
       })
       .catch(() => {
         // no permission or no fix -- just stay on the zoomed-out default
         // rather than blocking the map on a location prompt
       });
-  }, [fetchMarkers]);
+  }, [maybeApplyInitialZoom]);
 
   const handleCameraMove = useCallback(
     (event: { coordinates: { latitude?: number; longitude?: number }; latitudeDelta: number; longitudeDelta: number }) => {
+      // AppleMaps.View fires onCameraMove once on initial mount with the
+      // starting viewport, before any gesture -- the first call is this
+      // component's only reliable "the native view is ready" signal
+      if (!mapReadyRef.current) {
+        mapReadyRef.current = true;
+        maybeApplyInitialZoom();
+      }
+
       const { latitude, longitude } = event.coordinates;
       if (latitude === undefined || longitude === undefined) return;
 
@@ -172,7 +205,7 @@ export default function SearchScreen() {
       if (debounceRef.current) clearTimeout(debounceRef.current);
       debounceRef.current = setTimeout(() => fetchMarkers(bounds), DEBOUNCE_MS);
     },
-    [fetchMarkers]
+    [fetchMarkers, maybeApplyInitialZoom]
   );
 
   // fetches a trail's route, zooms the camera to fit it (capped), and opens
@@ -270,12 +303,21 @@ export default function SearchScreen() {
         id: String(trail.osm_id),
       }));
 
+  // the outline polylines are listed first so the real trail line draws on
+  // top of them, not the other way around
   const polylines = selectedTrail
-    ? selectedTrail.lines.map((line) => ({
-        coordinates: line.map(([lon, lat]) => ({ latitude: lat, longitude: lon })),
-        color: TRAIL_COLOR,
-        width: 3,
-      }))
+    ? [
+        ...selectedTrail.lines.map((line) => ({
+          coordinates: line.map(([lon, lat]) => ({ latitude: lat, longitude: lon })),
+          color: TRAIL_OUTLINE_COLOR,
+          width: TRAIL_OUTLINE_WIDTH,
+        })),
+        ...selectedTrail.lines.map((line) => ({
+          coordinates: line.map(([lon, lat]) => ({ latitude: lat, longitude: lon })),
+          color: TRAIL_COLOR,
+          width: TRAIL_WIDTH,
+        })),
+      ]
     : [];
 
   const sections = [
@@ -296,6 +338,7 @@ export default function SearchScreen() {
           polylines={polylines}
           markers={mapMarkers}
           onMarkerClick={handleMarkerClick}
+          properties={{ isMyLocationEnabled: true }}
         />
       ) : (
         <GoogleMaps.View
@@ -306,6 +349,7 @@ export default function SearchScreen() {
           polylines={polylines}
           markers={mapMarkers}
           onMarkerClick={handleMarkerClick}
+          properties={{ isMyLocationEnabled: true }}
         />
       )}
 
@@ -354,8 +398,8 @@ export default function SearchScreen() {
               <Pressable style={styles.row} onPress={() => selectTrail(item.osm_id)}>
                 <Text style={styles.name}>{item.name}</Text>
                 <Text style={styles.meta}>
-                  {(item.distance_m / 1000).toFixed(1)} km · {Math.round(item.elevation_gain_m)} m gain ·{' '}
-                  {item.biome_name}
+                  {(hikeDistanceM(item.distance_m, item.is_loop) / 1000).toFixed(1)} km ·{' '}
+                  {Math.round(item.elevation_gain_m)} m gain · {item.biome_name}
                   {isNearby(item) ? ` · ${item.distance_km.toFixed(1)} km away` : ''}
                 </Text>
               </Pressable>

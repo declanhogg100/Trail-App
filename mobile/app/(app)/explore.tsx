@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react';
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { ApiError, getRecommendations, NearbyTrail, RecommendationItem, trailsNear } from '../../src/api';
+import { hikeDistanceM } from '../../src/format';
 import { getCurrentLocation } from '../../src/location';
 import { colors } from '../../src/theme';
 
@@ -79,8 +80,8 @@ export default function ExploreScreen() {
           <Pressable style={styles.row} onPress={() => router.push(`/trail/${item.osm_id}`)}>
             <Text style={styles.name}>{item.name}</Text>
             <Text style={styles.meta}>
-              {(item.distance_m / 1000).toFixed(1)} km · {Math.round(item.elevation_gain_m)} m gain ·{' '}
-              {item.biome_name}
+              {(hikeDistanceM(item.distance_m, item.is_loop) / 1000).toFixed(1)} km ·{' '}
+              {Math.round(item.elevation_gain_m)} m gain · {item.biome_name}
               {isRecommendation(item)
                 ? ''
                 : ` · ${item.distance_km.toFixed(1)} km away`}

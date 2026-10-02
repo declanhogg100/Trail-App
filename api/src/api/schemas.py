@@ -7,6 +7,7 @@ class TrailSummary(BaseModel):
     osm_id: int
     name: str
     distance_m: float
+    is_loop: bool
     elevation_gain_m: float
     biome_name: str
 
@@ -58,6 +59,7 @@ class RecommendationItem(BaseModel):
     osm_id: int
     name: str
     distance_m: float
+    is_loop: bool
     elevation_gain_m: float
     biome_name: str
     similarity_score: float

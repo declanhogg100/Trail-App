@@ -6,7 +6,7 @@ from fastapi import Depends, FastAPI, HTTPException, Response
 from recommender.geometry_store import TrailGeometryStore
 from recommender.inference import TrailRecommender
 from recommender.offline_tile_store import OfflineTileStore
-from recommender.profile_store import TrailProfileStore
+from recommender.profile_store import TrailProfileStore, build_round_trip_profile
 from sqlalchemy.orm import Session
 from time_estimator.inference import TimeEstimator
 
@@ -270,4 +270,13 @@ def estimate_trail_time(osm_id: int, user: User = Depends(get_current_user), db:
     profile = models["profile_store"].get_profile(osm_id)
     if profile is None:
         raise HTTPException(status_code=404, detail=f"no elevation profile for osm_id {osm_id}")
+
+    # an out-and-back trail's real hike walks the stored route twice (there
+    # and back) -- the model needs to see that whole shape, not just the
+    # one-way profile, so the predicted time (and the distance_m this
+    # returns) reflects the actual hike instead of half of it
+    trail = models["recommender"].get_trail(osm_id)
+    if trail is not None and not trail["is_loop"]:
+        profile = build_round_trip_profile(profile)
+
     return models["time_estimator"].predict_from_profile(profile, _previous_hikes(user, db))
