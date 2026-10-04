@@ -6,7 +6,7 @@ from fastapi import Depends, FastAPI, HTTPException, Response
 from recommender.geometry_store import TrailGeometryStore
 from recommender.inference import TrailRecommender
 from recommender.offline_tile_store import OfflineTileStore
-from recommender.profile_store import TrailProfileStore, build_round_trip_profile
+from recommender.profile_store import TrailProfileStore
 from sqlalchemy.orm import Session
 from time_estimator.inference import TimeEstimator
 
@@ -266,17 +266,40 @@ def estimate_time(
 
 
 @app.get("/trails/{osm_id}/estimate-time", response_model=EstimateTimeResponse)
-def estimate_trail_time(osm_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def estimate_trail_time(
+    osm_id: int,
+    round_trip: bool | None = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     profile = models["profile_store"].get_profile(osm_id)
     if profile is None:
         raise HTTPException(status_code=404, detail=f"no elevation profile for osm_id {osm_id}")
 
-    # an out-and-back trail's real hike walks the stored route twice (there
-    # and back) -- the model needs to see that whole shape, not just the
-    # one-way profile, so the predicted time (and the distance_m this
-    # returns) reflects the actual hike instead of half of it
+    # is_loop can't distinguish a genuine out-and-back from a point-to-point
+    # trail that just happens to start and end in different places (e.g.
+    # Trans-Catalina Trail, hiked once between two different harbors) --
+    # both look identical as a line. round_trip lets the person who
+    # actually knows their own plans override the guess explicitly, rather
+    # than trying to infer it from geometry alone.
     trail = models["recommender"].get_trail(osm_id)
-    if trail is not None and not trail["is_loop"]:
-        profile = build_round_trip_profile(profile)
+    should_round_trip = round_trip if round_trip is not None else (trail is not None and not trail["is_loop"])
 
-    return models["time_estimator"].predict_from_profile(profile, _previous_hikes(user, db))
+    estimate = models["time_estimator"].predict_from_profile(profile, _previous_hikes(user, db))
+
+    if should_round_trip:
+        # the GRU is trained only on single-day hikr.org hikes capped at
+        # 80km / 16h (see DISTANCE_RANGE_M in hikr_dataset.py) -- feeding it
+        # a doubled-length round-trip profile pushes well past anything it
+        # saw in training and its output saturates instead of scaling, so a
+        # 122km round trip predicts almost the same time as the 61km one-way
+        # version. Doubling the model's own (in-distribution) one-way
+        # estimate is a far safer assumption than trusting that extrapolation.
+        estimate = {
+            "estimated_seconds": estimate["estimated_seconds"] * 2,
+            "range_low_seconds": estimate["range_low_seconds"] * 2,
+            "range_high_seconds": estimate["range_high_seconds"] * 2,
+            "distance_m": estimate["distance_m"] * 2,
+        }
+
+    return estimate

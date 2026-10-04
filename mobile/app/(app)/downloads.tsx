@@ -2,7 +2,7 @@ import { useCallback, useState } from 'react';
 import { Alert, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { FontAwesome } from '@expo/vector-icons';
-import { hikeDistanceM, metersToFeet, metersToMiles } from '../../src/format';
+import { hikeDistanceM, hikeElevationGainM, metersToFeet, metersToMiles } from '../../src/format';
 import { listOfflineTrails, OfflineTrail, removeOfflineTrail } from '../../src/offlineTrails';
 import { colors } from '../../src/theme';
 
@@ -56,7 +56,17 @@ export default function DownloadsScreen() {
                 <Text style={styles.name}>{item.trail.detail.name}</Text>
                 <Text style={styles.meta}>
                   {metersToMiles(hikeDistanceM(item.trail.detail.distance_m, item.trail.detail.is_loop)).toFixed(2)}{' '}
-                  mi · {Math.round(metersToFeet(item.trail.detail.elevation_gain_m))} ft gain
+                  mi ·{' '}
+                  {Math.round(
+                    metersToFeet(
+                      hikeElevationGainM(
+                        item.trail.detail.elevation_gain_m,
+                        item.trail.detail.elevation_loss_m,
+                        item.trail.detail.is_loop
+                      )
+                    )
+                  )}{' '}
+                  ft gain
                 </Text>
               </Pressable>
               <Pressable style={styles.removeButton} hitSlop={12} onPress={() => confirmRemove(item)}>

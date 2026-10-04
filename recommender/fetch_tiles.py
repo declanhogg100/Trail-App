@@ -1,7 +1,10 @@
 import os
 import re
+from pathlib import Path
 
 import requests
+
+from convert_dem_to_int16 import convert_file
 
 DEM_TILES = [
     "N36W119", "N36W120", "N37W119", "N44E010",
@@ -42,8 +45,14 @@ if __name__ == "__main__":
     print("DEM tiles:")
     for tile in DEM_TILES:
         print(f"fetching {tile}...")
+        out_path = f"data/dem/{tile}.tif"
         try:
-            download(dem_url(tile), f"data/dem/{tile}.tif")
+            download(dem_url(tile), out_path)
+            # Copernicus ships float32 -- converted to int16 immediately so
+            # a fresh fetch never leaves a tile at 2x the size everything
+            # else on disk already was converted down to (see
+            # convert_dem_to_int16.py for why this loses no real precision)
+            convert_file(Path(out_path))
         except Exception as e:
             print(f"  FAILED: {type(e).__name__}: {e}")
 

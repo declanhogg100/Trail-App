@@ -22,7 +22,7 @@ import {
   TrailMapMarker,
   TrailSummary,
 } from '../../src/api';
-import { hikeDistanceM } from '../../src/format';
+import { hikeDistanceM, hikeElevationGainM } from '../../src/format';
 import { geocodeArea, getCurrentLocation } from '../../src/location';
 import { TrailDetailContent } from '../../src/components/TrailDetailContent';
 import { colors } from '../../src/theme';
@@ -399,7 +399,8 @@ export default function SearchScreen() {
                 <Text style={styles.name}>{item.name}</Text>
                 <Text style={styles.meta}>
                   {(hikeDistanceM(item.distance_m, item.is_loop) / 1000).toFixed(1)} km ·{' '}
-                  {Math.round(item.elevation_gain_m)} m gain · {item.biome_name}
+                  {Math.round(hikeElevationGainM(item.elevation_gain_m, item.elevation_loss_m, item.is_loop))} m gain ·{' '}
+                  {item.biome_name}
                   {isNearby(item) ? ` · ${item.distance_km.toFixed(1)} km away` : ''}
                 </Text>
               </Pressable>

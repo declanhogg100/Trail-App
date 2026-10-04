@@ -1,0 +1,14 @@
+mobile
+.git
+
+**/.venv
+**/__pycache__
+**/*.pyc
+
+# bind-mounted from the host volume at runtime instead -- see Dockerfile
+recommender/data
+time_estimator/data
+api/data
+
+**/.ipynb_checkpoints
+**/*.ipynb

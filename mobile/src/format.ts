@@ -16,6 +16,15 @@ export function hikeDistanceM(distanceM: number, isLoop: boolean): number {
   return isLoop ? distanceM : distanceM * 2;
 }
 
+// unlike distance, elevation gain does NOT simply double for an out-and-back
+// -- reversing the one-way path turns every one-way descent into a climb on
+// the way back (and vice versa), so the return leg's gain equals the outbound
+// leg's LOSS, not its gain. Total round-trip gain is gain + loss, which only
+// equals 2x gain in the special case where the trail is net flat start-to-end.
+export function hikeElevationGainM(elevationGainM: number, elevationLossM: number, isLoop: boolean): number {
+  return isLoop ? elevationGainM : elevationGainM + elevationLossM;
+}
+
 export function formatElapsed(ms: number): string {
   const totalSeconds = Math.floor(ms / 1000);
   const hours = Math.floor(totalSeconds / 3600);

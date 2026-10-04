@@ -1,3 +1,5 @@
+import threading
+from collections import defaultdict
 from pathlib import Path
 
 from shapely.geometry import LineString, MultiLineString
@@ -11,14 +13,35 @@ CACHE_DIR = _PROJECT_ROOT / "data" / "offline_tile_cache"
 class OfflineTileStore:
     def __init__(self, cache_dir: str | Path = CACHE_DIR):
         self.cache_dir = Path(cache_dir)
+        # FastAPI runs sync endpoint handlers in a thread pool, and
+        # MapLibre requests every visible tile roughly at once -- without a
+        # lock here, the first wave of concurrent requests for a trail that
+        # hasn't been rendered yet would *each* independently kick off a
+        # full redundant render (the whole trail, not just their one
+        # tile), serializing under the GIL and making the map appear to
+        # load tiles one at a time, slowly, instead of all at once.
+        # defaultdict(Lock) means each osm_id gets its own lock, so
+        # concurrent requests for *different* trails still don't block
+        # each other -- only repeat requests for the same one do.
+        self._render_locks: dict[int, threading.Lock] = defaultdict(threading.Lock)
+        self._render_locks_guard = threading.Lock()
 
     def _trail_dir(self, osm_id: int) -> Path:
         return self.cache_dir / str(osm_id)
 
+    def _render_lock(self, osm_id: int) -> threading.Lock:
+        with self._render_locks_guard:
+            return self._render_locks[osm_id]
+
     def _ensure_rendered(self, osm_id: int, lines: list[list[list[float]]]) -> None:
         marker = self._trail_dir(osm_id) / "_complete"
-        if not marker.exists():
-            self._render_and_cache(osm_id, lines)
+        if marker.exists():
+            return
+        with self._render_lock(osm_id):
+            # re-check after acquiring the lock -- another thread may have
+            # already finished rendering this trail while we were waiting
+            if not marker.exists():
+                self._render_and_cache(osm_id, lines)
 
     def get_manifest(self, osm_id: int, lines: list[list[list[float]]]) -> list[dict]:
         self._ensure_rendered(osm_id, lines)

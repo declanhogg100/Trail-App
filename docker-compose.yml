@@ -1,0 +1,36 @@
+services:
+  api:
+    build: .
+    restart: unless-stopped
+    environment:
+      - DATABASE_PATH=/data/api/trailapp.db
+      - SESSION_SECRET=${SESSION_SECRET:?SESSION_SECRET must be set -- see .env.example}
+      - DEV_AUTH_ENABLED=false
+    volumes:
+      # paths on the left are the persistent volume on the VPS -- see
+      # DEPLOY.md for exactly what goes in each one. Only these specific
+      # runtime-needed files/folders are mounted, not the whole data/
+      # directories (most of what's in there, like training CSVs, is
+      # dev-only and was never meant to ship to the server).
+      - ${DATA_ROOT:-./deploy-data}/recommender:/app/recommender/data
+      - ${DATA_ROOT:-./deploy-data}/time_estimator-hikr:/app/time_estimator/data/hikr
+      - ${DATA_ROOT:-./deploy-data}/api:/data/api
+    expose:
+      - "8000"
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+
+volumes:
+  caddy_data:
+  caddy_config:

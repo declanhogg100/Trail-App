@@ -17,6 +17,7 @@ from shapely.geometry import LineString, MultiLineString, box
 # resolves to nowhere and every lookup below comes back empty.
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEM_DIR = str(_PROJECT_ROOT / "data" / "dem")
+LANDCOVER_DIR = str(_PROJECT_ROOT / "data" / "landcover")
 
 # standard Web Mercator (EPSG:3857) slippy-map tile scheme -- same one
 # OSM/Google/Apple all use, which is why every off-the-shelf map client
@@ -93,23 +94,47 @@ def _dem_paths_for_bbox(min_lon: float, min_lat: float, max_lon: float, max_lat:
 
 
 
-def _merge_clipped(paths: list[str], bounds: tuple[float, float, float, float]):
+# ESA WorldCover ships as 3deg x 3deg tiles (vs. DEM's 1deg x 1deg), so the
+# grid math is the same idea at a different cell size -- matches
+# scan_needed_tiles.py's _landcover_tile_name, which is what determined
+# which of these tiles actually got downloaded in the first place
+def _landcover_paths_for_bbox(min_lon: float, min_lat: float, max_lon: float, max_lat: float) -> list[str]:
+    paths = []
+    lat_start, lat_end = math.floor(min_lat / 3) * 3, math.floor(max_lat / 3) * 3
+    lon_start, lon_end = math.floor(min_lon / 3) * 3, math.floor(max_lon / 3) * 3
+    for lat in range(lat_start, lat_end + 1, 3):
+        for lon in range(lon_start, lon_end + 1, 3):
+            ns, ew = ("N" if lat >= 0 else "S"), ("E" if lon >= 0 else "W")
+            path = f"{LANDCOVER_DIR}/{ns}{abs(lat):02d}{ew}{abs(lon):03d}.tif"
+            if os.path.exists(path):
+                paths.append(path)
+    return paths
+
+
+def _merge_clipped(paths: list[str], bounds: tuple[float, float, float, float], res: float | None = None):
     datasets = [rasterio.open(p) for p in paths]
     try:
-        array, transform = merge(datasets, bounds=bounds)
+        array, transform = merge(datasets, bounds=bounds, res=res, resampling=Resampling.nearest)
     finally:
         for d in datasets:
             d.close()
     return array[0].astype(np.float32), transform
 
 
-def _hillshade(elevation: np.ndarray, px_size_deg: float, center_lat: float) -> np.ndarray:
-    # approximate meters-per-pixel at this buffer's latitude -- good enough
-    # for a background relief shade, not meant to be survey-grade
-    m_per_deg = 111_320.0 * math.cos(math.radians(center_lat))
-    res_m = max(px_size_deg * m_per_deg, 1.0)
+# real elevation, shaded at literal 1:1 scale, reads as nearly flat gray
+# for anything short of dramatic mountain terrain -- a 15m rise over a
+# short trail is real and would be perfectly obvious on foot, but is far
+# too subtle a gradient for a hillshade formula to make visible at screen
+# resolution. Exaggerating elevation before shading is standard practice
+# in terrain cartography for exactly this reason. Tuned so flatter trails
+# (the common case) become genuinely readable without making already-steep
+# mountain terrain look cartoonish -- the shading formula's own sin/cos
+# terms saturate well before 255 on real slopes, so there's headroom.
+VERTICAL_EXAGGERATION = 6.0
 
-    dy, dx = np.gradient(elevation, res_m)
+
+def _hillshade(elevation: np.ndarray, res_m: float) -> np.ndarray:
+    dy, dx = np.gradient(elevation * VERTICAL_EXAGGERATION, max(res_m, 1.0))
     slope = math.pi / 2 - np.arctan(np.hypot(dx, dy))
     aspect = np.arctan2(-dx, dy)
 
@@ -136,6 +161,88 @@ def _reproject_to_tile(src_array: np.ndarray, src_transform, dst_bounds_3857, re
     return dst
 
 
+# np.gradient has no visibility past an array's own edge (one-sided
+# differences there), so computing it independently per tile -- each a
+# standalone crop with no knowledge of its neighbors -- would leave visible
+# seams where adjacent tiles' gradients don't quite agree along the shared
+# border. Reprojecting a few extra pixels of margin on every side first,
+# computing the gradient across that full padded array, and only then
+# cropping back down to the real tile keeps every interior pixel's gradient
+# identical to what it would be in the unbroken, un-tiled source.
+GRADIENT_PAD_PX = 4
+
+
+def _reproject_padded(src_array: np.ndarray, src_transform, dst_bounds_3857, resampling, dtype) -> np.ndarray:
+    minx, miny, maxx, maxy = dst_bounds_3857
+    res_x = (maxx - minx) / TILE_SIZE
+    res_y = (maxy - miny) / TILE_SIZE
+    padded_bounds = (
+        minx - GRADIENT_PAD_PX * res_x,
+        miny - GRADIENT_PAD_PX * res_y,
+        maxx + GRADIENT_PAD_PX * res_x,
+        maxy + GRADIENT_PAD_PX * res_y,
+    )
+    padded_size = TILE_SIZE + 2 * GRADIENT_PAD_PX
+    dst_transform = rasterio.transform.from_bounds(*padded_bounds, padded_size, padded_size)
+    dst = np.zeros((padded_size, padded_size), dtype=dtype)
+    reproject(
+        source=src_array,
+        destination=dst,
+        src_transform=src_transform,
+        src_crs="EPSG:4326",
+        dst_transform=dst_transform,
+        dst_crs="EPSG:3857",
+        resampling=resampling,
+    )
+    return dst
+
+
+# ESA WorldCover class codes -> muted, dark-theme-consistent colors.
+# Deliberately desaturated -- an earlier version of this renderer used
+# bright, saturated land-cover colors and it actively fought the trail
+# route/walked-path line colors for attention on screen (see git history).
+# These are meant to read as a subtle tint under the hillshade, not a
+# colorful land-use map in their own right.
+LANDCOVER_CLASS_COLORS: dict[int, tuple[int, int, int]] = {
+    10: (45, 58, 42),  # tree cover
+    20: (61, 63, 46),  # shrubland
+    30: (74, 74, 53),  # grassland
+    40: (74, 66, 48),  # cropland
+    50: (58, 54, 54),  # built-up
+    60: (74, 64, 56),  # bare / sparse vegetation
+    70: (90, 90, 90),  # snow and ice
+    80: (26, 38, 48),  # permanent water bodies
+    90: (42, 58, 53),  # herbaceous wetland
+    95: (42, 58, 53),  # mangroves
+    100: (80, 80, 70),  # moss and lichen
+}
+# used for any class code not in the table above (there shouldn't be any,
+# but better an unobtrusive fallback than a KeyError mid-render) and for
+# tiles with no land-cover data at all (ocean far from shore, etc.)
+LANDCOVER_DEFAULT_COLOR = (74, 63, 56)
+
+
+def _tint_with_landcover(gray: np.ndarray, landcover: np.ndarray | None) -> np.ndarray:
+    if landcover is None:
+        return np.stack([gray, gray, gray], axis=-1)
+
+    tint = np.full((*landcover.shape, 3), LANDCOVER_DEFAULT_COLOR, dtype=np.float32)
+    landcover_int = np.round(landcover).astype(np.int16)
+    for cls, color in LANDCOVER_CLASS_COLORS.items():
+        mask = landcover_int == cls
+        for c in range(3):
+            tint[:, :, c] = np.where(mask, color[c], tint[:, :, c])
+
+    # multiply blend -- the hillshade's own luminance (0-255) still carries
+    # all the terrain shape/shading, the land-cover tint only recolors it,
+    # it doesn't replace it with flat color regions. The 1.4 factor
+    # compensates for multiply-blending otherwise darkening everything
+    # (tint values are themselves well under 255), keeping the result close
+    # to the tint's own intended brightness rather than uniformly dim.
+    luminance = gray / 255.0
+    return np.clip(tint * luminance[:, :, None] * 1.4, 0, 255)
+
+
 def _corridor_polygon(geometry: LineString | MultiLineString, buffer_m: float):
     # approximate degrees-per-meter at this geometry's latitude -- fine for
     # a visual download-corridor margin, not a survey measurement. Buffering
@@ -155,6 +262,8 @@ def render_tiles(
     max_lat: float,
     zooms: list[int],
     corridor=None,
+    use_landcover: bool = True,
+    landcover_res_deg: float | None = None,
 ) -> dict[tuple[int, int, int], Image.Image]:
     # clip source data to the full tile-grid extent at the coarsest zoom
     # being rendered, not the raw requested bbox -- see _grid_bounds_lonlat.
@@ -176,8 +285,23 @@ def render_tiles(
 
     elevation, dem_transform = _merge_clipped(dem_paths, clip_bounds)
 
-    center_lat = (clip_bounds[1] + clip_bounds[3]) / 2
-    hillshade = _hillshade(elevation, abs(dem_transform.a), center_lat)
+    # land-cover is purely a visual tint on top of the hillshade -- unlike
+    # the DEM above, its absence isn't fatal (some corners of the catalog
+    # may not have it), it just falls back to the old pure-grayscale look.
+    # landcover_res_deg downsamples the merge for wide, coarse renders
+    # (CONTEXT_ZOOMS) -- at that scale individual 10m land-cover pixels
+    # aren't visually meaningful anyway, and merging full-resolution
+    # WorldCover data across a 12km buffer measured at ~230M pixels / ~3s
+    # for one trail. A coarser merge keeps color consistent across the
+    # whole map (no visible seam where the fine corridor's tint stops) at
+    # a fraction of the cost -- leaving it a flat None for the fine render,
+    # which is already fast at native resolution.
+    landcover_paths = _landcover_paths_for_bbox(*clip_bounds) if use_landcover else []
+    landcover, landcover_transform = (
+        _merge_clipped(landcover_paths, clip_bounds, res=landcover_res_deg)
+        if landcover_paths
+        else (None, None)
+    )
 
     results: dict[tuple[int, int, int], Image.Image] = {}
     for zoom in zooms:
@@ -195,14 +319,39 @@ def render_tiles(
                 if not corridor.intersects(box(lon_w, lat_s, lon_e, lat_n)):
                     continue
 
-            # pure grayscale shaded relief -- no land-cover color at all, by
-            # design: a busy multi-hue background was actively fighting the
-            # trail/walked-path line colors for attention on a screen whose
-            # whole job is making that line easy to follow. The hillshade
-            # value IS the pixel value directly (R=G=B), no compositing.
-            shade_tile = _reproject_to_tile(hillshade, dem_transform, dst_bounds, Resampling.bilinear, np.float32)
+            # elevation (not the shaded result) is upsampled to this tile's
+            # own fine grid first, and the hillshade gradient computed
+            # *after* that -- computing it once on the source DEM's native
+            # ~25-30m grid and only upsampling the shaded result afterward
+            # left the coarse source grid's own blockiness visible (bilinear
+            # smooths the transitions between cells, but doesn't add
+            # resolution the gradient never had). Doing it per-tile is more
+            # compute, but at these tile counts (tens, not thousands) that's
+            # not a real cost. Reprojected with a few pixels of margin (see
+            # GRADIENT_PAD_PX) and cropped back down after shading, so the
+            # gradient at this tile's own edges isn't a one-sided guess.
+            padded_elevation = _reproject_padded(
+                elevation, dem_transform, dst_bounds, Resampling.bilinear, np.float32
+            )
+            # dst_bounds is already in Web Mercator meters, so the tile's
+            # own resolution falls straight out of its extent -- no
+            # degrees-to-meters approximation needed the way the old
+            # single-pass version needed one for the source DEM's grid
+            res_m = (dst_bounds[2] - dst_bounds[0]) / TILE_SIZE
+            padded_shade = _hillshade(padded_elevation, res_m)
+            shade_tile = padded_shade[GRADIENT_PAD_PX:-GRADIENT_PAD_PX, GRADIENT_PAD_PX:-GRADIENT_PAD_PX]
             gray = np.clip(shade_tile, 0, 255).astype(np.uint8)
-            composite = np.stack([gray, gray, gray], axis=-1)
+
+            # land-cover reprojected with nearest-neighbor, not bilinear --
+            # it's a categorical class code, not a continuous value, so
+            # interpolating "between" classes would invent nonsense
+            # intermediate values rather than just picking the nearer one
+            landcover_tile = (
+                _reproject_to_tile(landcover, landcover_transform, dst_bounds, Resampling.nearest, np.float32)
+                if landcover is not None
+                else None
+            )
+            composite = _tint_with_landcover(gray, landcover_tile).astype(np.uint8)
             results[(zoom, x, y)] = Image.fromarray(composite, mode="RGB")
 
     return results
@@ -215,8 +364,34 @@ def render_tiles(
 OFFLINE_ZOOMS = [13, 14, 15]
 OFFLINE_BUFFER_M = 600.0
 
+# a second, much wider but coarser render -- lets the app lock its camera
+# to (and let you zoom out to see) a real chunk of surrounding geography
+# instead of either the narrow hiking corridor above or nothing at all.
+# Cheap specifically because it's coarse: each tile at these zooms covers
+# far more ground than one at OFFLINE_ZOOMS, so 12km of buffer here is a
+# handful of tiles, not the hundreds it'd be at the fine zooms.
+CONTEXT_ZOOMS = [10, 11, 12]
+CONTEXT_BUFFER_M = 12_000.0
+
 
 def render_trail_tiles(geometry: LineString | MultiLineString) -> dict[tuple[int, int, int], Image.Image]:
     corridor = _corridor_polygon(geometry, OFFLINE_BUFFER_M)
     min_lon, min_lat, max_lon, max_lat = corridor.bounds
-    return render_tiles(min_lon, min_lat, max_lon, max_lat, OFFLINE_ZOOMS, corridor=corridor)
+    fine = render_tiles(min_lon, min_lat, max_lon, max_lat, OFFLINE_ZOOMS, corridor=corridor)
+
+    context_corridor = _corridor_polygon(geometry, CONTEXT_BUFFER_M)
+    c_min_lon, c_min_lat, c_max_lon, c_max_lat = context_corridor.bounds
+    context = render_tiles(
+        c_min_lon,
+        c_min_lat,
+        c_max_lon,
+        c_max_lat,
+        CONTEXT_ZOOMS,
+        corridor=context_corridor,
+        # ~55m/pixel -- plenty for CONTEXT_ZOOMS' own native resolution
+        # (~38-150m/pixel across zooms 10-12), nowhere near WorldCover's
+        # full 10m, which is what made this expensive in the first place
+        landcover_res_deg=0.0005,
+    )
+
+    return {**fine, **context}

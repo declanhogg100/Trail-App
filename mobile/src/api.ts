@@ -1,9 +1,10 @@
-// Points at the local FastAPI server (see ../../api). Set to the Mac's LAN
-// IP for physical-device testing (a real phone can't resolve "localhost" to
-// your computer). Switch back to "http://localhost:8000" if testing on the
-// iOS Simulator instead -- and re-run `ipconfig getifaddr en0` if this ever
-// stops working, since your Mac's LAN IP can change between networks.
-const API_BASE_URL = "http://192.168.4.33:8000";
+// Set via EXPO_PUBLIC_API_BASE_URL (see mobile/.env for the local-dev
+// default, mobile/.env.local for a personal override, and eas.json for a
+// production build's URL -- see Expo's env var docs). Falls back to
+// localhost if somehow unset. For local-device testing over LAN, .env's
+// value needs your Mac's current LAN IP -- re-run `ipconfig getifaddr en0`
+// if that ever stops working, since it can change between networks.
+const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
 // held in memory, attached to every authenticated request -- persisted
 // separately to SecureStore by auth.ts, which restores it into here on launch
@@ -19,6 +20,7 @@ export type TrailSummary = {
   distance_m: number;
   is_loop: boolean;
   elevation_gain_m: number;
+  elevation_loss_m: number;
   biome_name: string;
 };
 
@@ -241,6 +243,10 @@ export function estimateTime(gpx: string): Promise<EstimateTimeResponse> {
   });
 }
 
-export function estimateTrailTime(osmId: number): Promise<EstimateTimeResponse> {
-  return request(`/trails/${osmId}/estimate-time`);
+// roundTrip left undefined defers to the trail's own is_loop guess
+// server-side; pass it explicitly to override that guess (see
+// TrailDetailContent's out-and-back toggle)
+export function estimateTrailTime(osmId: number, roundTrip?: boolean): Promise<EstimateTimeResponse> {
+  const query = roundTrip === undefined ? '' : `?round_trip=${roundTrip}`;
+  return request(`/trails/${osmId}/estimate-time${query}`);
 }

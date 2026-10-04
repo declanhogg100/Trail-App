@@ -23,7 +23,22 @@ dependencies = [
 recommender = "recommender:main"
 
 [tool.uv]
-environments = ["sys_platform == 'darwin'"]
+# darwin for local dev on macOS, linux for the production server (the API
+# process imports this package directly, so its lockfile has to resolve on
+# whatever platform actually runs api.main:app)
+environments = ["sys_platform == 'darwin'", "sys_platform == 'linux'"]
+
+[tool.uv.sources]
+# the production server has no GPU -- without this, uv resolves torch's
+# default Linux wheel, which drags in several GB of CUDA/NVIDIA packages
+# that would never be used, for a model small enough that CPU inference is
+# instant anyway
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [build-system]
 requires = ["uv_build>=0.12.1,<0.13.0"]

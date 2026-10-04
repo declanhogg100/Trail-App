@@ -1,7 +1,16 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { router } from 'expo-router';
-import { Camera, GeoJSONSource, Layer, Map as MapLibreMap, RasterSource, UserLocation } from '@maplibre/maplibre-react-native';
+import {
+  Camera,
+  type CameraRef,
+  GeoJSONSource,
+  Layer,
+  type LngLatBounds,
+  Map as MapLibreMap,
+  RasterSource,
+  UserLocation,
+} from '@maplibre/maplibre-react-native';
 import { getTrailGeometry, logHike, offlineTileUrlTemplate } from '../../src/api';
 import { useActiveHike } from '../../src/activeHike';
 import { formatElapsed, formatPace, metersToFeet, metersToMiles } from '../../src/format';
@@ -14,14 +23,97 @@ import { colors } from '../../src/theme';
 // otherwise), painted on top of this blank canvas. No third-party online
 // base map here on purpose -- see the tile-source logic below for why.
 const BLANK_STYLE = { version: 8 as const, sources: {}, layers: [] };
-const OFFLINE_TILE_ZOOMS = { min: 13, max: 15 };
+// 10-12 come from recommender's CONTEXT_ZOOMS (a wide, coarse render for
+// zoomed-out surrounding geography), 13-15 from OFFLINE_ZOOMS (a tight,
+// fine-detail render of the immediate trail corridor) -- both are served
+// by the same per-tile endpoint/local cache, so one RasterSource spanning
+// the whole range is all that's needed; MapLibre requests whichever zoom
+// it actually needs as you zoom.
+const OFFLINE_TILE_ZOOMS = { min: 10, max: 15 };
+
+// how far past the trail's own bounding box the camera is allowed to pan
+// and zoom out to. Safely less than the server's own CONTEXT_BUFFER_M
+// (12km) -- the render buffer is measured from the trail LINE, but this is
+// the padding on the trail's bounding BOX, so staying a little inside the
+// render buffer keeps the locked rectangle's corners (which stick out
+// further from the line than its edges do) from poking past what's
+// actually been rendered.
+const MAX_BOUNDS_BUFFER_M = 10_000;
 
 // map line colors are deliberately not drawn from the app's black/maroon
 // theme -- a planned route and a recorded track need to read as two
 // distinct things at a glance against whatever terrain is underneath them,
 // which matters more here than matching the brand palette
 const TRAIL_COLOR = '#2e7d32';
+const TRAIL_WIDTH = 4;
+// neither AppleMaps/GoogleMaps nor MapLibre expose a native outline/casing
+// property on a polyline -- a faint halo is faked by drawing a wider,
+// translucent line of the same color underneath the real one. Same
+// treatment as the Search/Map screen's trail line.
+const TRAIL_OUTLINE_COLOR = 'rgba(46, 125, 50, 0.35)';
+const TRAIL_OUTLINE_WIDTH = 8;
 const WALKED_COLOR = '#1e88e5';
+
+// start/end trailhead markers -- white reads clearly as "the beginning"
+// against any terrain color underneath; maroon ties "the end" (for an
+// out-and-back, its literal turnaround point) back to the app's own accent
+// color rather than inventing a third unrelated hue
+const TRAIL_START_COLOR = '#ffffff';
+const TRAIL_END_COLOR = colors.maroonLight;
+const TRAIL_MARKER_RADIUS = 6;
+
+// approximates the standard slippy-map zoom convention (span halves each
+// zoom level) -- not pixel-perfect since it ignores screen width/aspect
+// ratio, but close enough for "pick a minZoom that keeps the trail's own
+// bounding box from being zoomed out past"
+function zoomForSpan(spanDeg: number): number {
+  return Math.log2(360 / spanDeg) + 1;
+}
+
+// the trail's own bounding box, padded by MAX_BOUNDS_BUFFER_M -- this is
+// what the camera gets locked to (see maxBounds/minZoom on Camera below),
+// so you can never pan or zoom out to where the map runs out of real,
+// rendered terrain and goes blank. A single whole-world background image
+// was tried first (see git history) -- there's no resolution that looks
+// right at both "whole continent" and "actually hiking" scales at once,
+// since it's one fixed-detail image regardless of zoom. Locking the
+// viewport to the area that's actually rendered sidesteps the problem
+// entirely instead of trying to paper over it.
+function boundsFromTrail(
+  trailLines: [number, number][][]
+): { bounds: LngLatBounds; minZoom: number } | null {
+  let minLon = Infinity;
+  let minLat = Infinity;
+  let maxLon = -Infinity;
+  let maxLat = -Infinity;
+  for (const line of trailLines) {
+    for (const [lon, lat] of line) {
+      if (lon < minLon) minLon = lon;
+      if (lon > maxLon) maxLon = lon;
+      if (lat < minLat) minLat = lat;
+      if (lat > maxLat) maxLat = lat;
+    }
+  }
+  if (!isFinite(minLon)) return null;
+
+  const centerLat = (minLat + maxLat) / 2;
+  const bufferDeg = MAX_BOUNDS_BUFFER_M / (111_320 * Math.max(Math.cos((centerLat * Math.PI) / 180), 0.1));
+
+  const bounds: LngLatBounds = [minLon - bufferDeg, minLat - bufferDeg, maxLon + bufferDeg, maxLat + bufferDeg];
+  const span = Math.max(bounds[2] - bounds[0], bounds[3] - bounds[1]);
+  // clamped to the range tiles actually exist in -- a short trail's own
+  // bbox can need a tighter zoom to fill the screen than OFFLINE_TILE_ZOOMS
+  // .max, which would otherwise permanently stretch the highest-detail
+  // tile available past its native resolution (blurry) with no way to
+  // zoom back out of it; a very long trail's bbox could in principle need
+  // a wider zoom than .min, which the floor guards symmetrically
+  const minZoom = Math.min(Math.max(zoomForSpan(span), OFFLINE_TILE_ZOOMS.min), OFFLINE_TILE_ZOOMS.max);
+  return { bounds, minZoom };
+}
+
+function isWithinBounds([lon, lat]: [number, number], [west, south, east, north]: LngLatBounds): boolean {
+  return lon >= west && lon <= east && lat >= south && lat <= north;
+}
 
 // a hike this short is almost always an accidental start/stop, not a real
 // hike -- saving it would pollute hike history and skew the time
@@ -56,7 +148,13 @@ export default function ActiveHikeScreen() {
   const [finishing, setFinishing] = useState(false);
   const [summary, setSummary] = useState<FinishedSummary | null>(null);
   const [trailLines, setTrailLines] = useState<[number, number][][] | null>(null);
+  const [geometryResolved, setGeometryResolved] = useState(false);
   const [tilesDir, setTilesDir] = useState<string | null>(null);
+  const cameraRef = useRef<CameraRef>(null);
+
+  // recomputed only when trailLines itself actually changes, not on every
+  // render
+  const trailBounds = useMemo(() => (trailLines ? boundsFromTrail(trailLines) : null), [trailLines]);
 
   useEffect(() => {
     let cancelled = false;
@@ -72,9 +170,17 @@ export default function ActiveHikeScreen() {
         return getOfflineTrail(osmId)?.geometry.lines ?? null;
       }
     };
-    load().then((lines) => {
-      if (!cancelled) setTrailLines(lines);
-    });
+    load()
+      .catch(() => null) // getOfflineTrail() throwing (corrupt cache, etc.) must not leave geometryResolved stuck false forever
+      .then((lines) => {
+        if (cancelled) return;
+        setTrailLines(lines);
+        // distinct from trailLines itself being null -- this fires once the
+        // fetch (or its offline fallback) has definitively settled either
+        // way, so the map doesn't mount with a guessed zoom before knowing
+        // whether we're actually near the trail (see mapReady below)
+        setGeometryResolved(true);
+      });
     Promise.resolve()
       .then(() => (osmId == null ? null : getOfflineTilesDir(osmId)))
       .then((dir) => {
@@ -172,10 +278,37 @@ export default function ActiveHikeScreen() {
     );
   }
 
-  // camera starts wherever GPS first fixes, falling back to the trail's own
-  // start point until that first fix arrives -- either way there's always
-  // something reasonable to center on rather than an arbitrary default
-  const initialFocus = currentPosition ?? trailLines?.[0]?.[0] ?? null;
+  const trailStart = trailLines?.[0]?.[0] ?? null;
+  // the stored geometry for an out-and-back trail is already just the
+  // one-way path to its turnaround point -- so the last coordinate of the
+  // last line is exactly the right "end" marker for both loop trails
+  // (where it lands back on/near the start) and out-and-back ones (where
+  // it's the real far point of the hike), with no special-casing needed
+  const lastLine = trailLines?.[trailLines.length - 1];
+  const trailEnd = lastLine?.[lastLine.length - 1] ?? null;
+
+  // the map doesn't mount at all until the trail geometry fetch (or its
+  // offline/no-trail fallback) has settled, and we have *some* reasonable
+  // point to focus on -- either a GPS fix, or (while still waiting on one)
+  // the trail's own start point. Without this fallback, a GPS fix that
+  // never arrives (denied permission, no signal) would leave the map stuck
+  // loading forever. The very first initialViewState ends up correct
+  // either way, instead of guessing zoom 15 up front and trying to correct
+  // it after the native camera is already live, which is unreliable (the
+  // native ref may not even be attached yet by the time such a correction
+  // would fire).
+  const mapReady = geometryResolved && (currentPosition !== null || trailStart !== null);
+
+  // same bounds check the follow effect above uses -- a GPS fix outside
+  // the rendered area shouldn't be the initial focus either, for the same
+  // reason it shouldn't drag the camera there later
+  const initialFocus =
+    currentPosition && (!trailBounds || isWithinBounds(currentPosition, trailBounds.bounds))
+      ? currentPosition
+      : trailStart;
+  // never start below the enforced floor -- a very short trail's bounds
+  // can require a minZoom above the usual default of 15
+  const initialZoom = Math.max(15, trailBounds?.minZoom ?? 0);
 
   // prefer the local copy (instant, works with zero signal) if this trail
   // was downloaded ahead of time; otherwise fall back to fetching tiles
@@ -190,51 +323,97 @@ export default function ActiveHikeScreen() {
 
   return (
     <View style={styles.container}>
-      <MapLibreMap style={styles.map} mapStyle={BLANK_STYLE}>
-        <Camera
-          initialViewState={initialFocus ? { center: initialFocus, zoom: 15 } : undefined}
-          trackUserLocation="default"
-        />
+      {mapReady && (
+        <MapLibreMap style={styles.map} mapStyle={BLANK_STYLE}>
+          <Camera
+            ref={cameraRef}
+            initialViewState={initialFocus ? { center: initialFocus, zoom: initialZoom } : undefined}
+            minZoom={trailBounds?.minZoom}
+            maxZoom={OFFLINE_TILE_ZOOMS.max}
+            maxBounds={trailBounds?.bounds}
+          />
 
-        <UserLocation />
+          <UserLocation />
 
-        {tileUrlTemplate && (
-          <RasterSource
-            id="offline-terrain"
-            tiles={[tileUrlTemplate]}
-            tileSize={256}
-            minzoom={OFFLINE_TILE_ZOOMS.min}
-            maxzoom={OFFLINE_TILE_ZOOMS.max}
-          >
-            <Layer type="raster" id="offline-terrain-layer" />
-          </RasterSource>
-        )}
+          {tileUrlTemplate && (
+            <RasterSource
+              id="offline-terrain"
+              tiles={[tileUrlTemplate]}
+              tileSize={256}
+              minzoom={OFFLINE_TILE_ZOOMS.min}
+              maxzoom={OFFLINE_TILE_ZOOMS.max}
+            >
+              <Layer type="raster" id="offline-terrain-layer" />
+            </RasterSource>
+          )}
 
-        {trailLines && (
-          <GeoJSONSource
-            id="trail-route"
-            data={{ type: 'MultiLineString', coordinates: trailLines }}
-          >
-            <Layer
-              type="line"
-              id="trail-route-layer"
-              layout={{ 'line-cap': 'round', 'line-join': 'round' }}
-              paint={{ 'line-color': TRAIL_COLOR, 'line-width': 3 }}
-            />
-          </GeoJSONSource>
-        )}
+          {trailLines && (
+            <GeoJSONSource
+              id="trail-route"
+              data={{ type: 'MultiLineString', coordinates: trailLines }}
+            >
+              {/* outline declared first so it renders underneath the real
+                  trail-route-layer below */}
+              <Layer
+                type="line"
+                id="trail-route-outline"
+                layout={{ 'line-cap': 'round', 'line-join': 'round' }}
+                paint={{ 'line-color': TRAIL_OUTLINE_COLOR, 'line-width': TRAIL_OUTLINE_WIDTH }}
+              />
+              <Layer
+                type="line"
+                id="trail-route-layer"
+                layout={{ 'line-cap': 'round', 'line-join': 'round' }}
+                paint={{ 'line-color': TRAIL_COLOR, 'line-width': TRAIL_WIDTH }}
+              />
+            </GeoJSONSource>
+          )}
 
-        {pathCoords.length > 1 && (
-          <GeoJSONSource id="walked-path" data={{ type: 'LineString', coordinates: pathCoords }}>
-            <Layer
-              type="line"
-              id="walked-path-layer"
-              layout={{ 'line-cap': 'round', 'line-join': 'round' }}
-              paint={{ 'line-color': WALKED_COLOR, 'line-width': 4 }}
-            />
-          </GeoJSONSource>
-        )}
-      </MapLibreMap>
+          {trailStart && (
+            <GeoJSONSource id="trail-start" data={{ type: 'Point', coordinates: trailStart }}>
+              <Layer
+                type="circle"
+                id="trail-start-layer"
+                paint={{
+                  'circle-radius': TRAIL_MARKER_RADIUS,
+                  'circle-color': TRAIL_START_COLOR,
+                  'circle-stroke-width': 2,
+                  'circle-stroke-color': TRAIL_COLOR,
+                }}
+              />
+            </GeoJSONSource>
+          )}
+
+          {/* for a loop trail this lands on/right next to trail-start --
+              expected, not a bug, since a loop's start and end really are
+              the same point */}
+          {trailEnd && (
+            <GeoJSONSource id="trail-end" data={{ type: 'Point', coordinates: trailEnd }}>
+              <Layer
+                type="circle"
+                id="trail-end-layer"
+                paint={{
+                  'circle-radius': TRAIL_MARKER_RADIUS,
+                  'circle-color': TRAIL_END_COLOR,
+                  'circle-stroke-width': 2,
+                  'circle-stroke-color': TRAIL_COLOR,
+                }}
+              />
+            </GeoJSONSource>
+          )}
+
+          {pathCoords.length > 1 && (
+            <GeoJSONSource id="walked-path" data={{ type: 'LineString', coordinates: pathCoords }}>
+              <Layer
+                type="line"
+                id="walked-path-layer"
+                layout={{ 'line-cap': 'round', 'line-join': 'round' }}
+                paint={{ 'line-color': WALKED_COLOR, 'line-width': 4 }}
+              />
+            </GeoJSONSource>
+          )}
+        </MapLibreMap>
+      )}
 
       <View style={styles.panel}>
         <View style={styles.panelHeader}>
@@ -261,7 +440,7 @@ export default function ActiveHikeScreen() {
         </View>
       </View>
 
-      {!currentPosition && (
+      {!mapReady && (
         <View style={styles.loadingBadge}>
           <ActivityIndicator color={colors.maroonLight} />
         </View>
@@ -280,7 +459,7 @@ function Stat({ label, value, grid }: { label: string; value: string; grid?: boo
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
+  container: { flex: 1, backgroundColor: colors.background },
   map: { flex: 1 },
   center: {
     flex: 1,

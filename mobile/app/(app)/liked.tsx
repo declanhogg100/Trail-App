@@ -3,7 +3,7 @@ import { ActivityIndicator, Alert, FlatList, Pressable, StyleSheet, Text, View }
 import { router, useFocusEffect } from 'expo-router';
 import { FontAwesome } from '@expo/vector-icons';
 import { listLikedTrails, TrailSummary, unlikeTrail } from '../../src/api';
-import { hikeDistanceM } from '../../src/format';
+import { hikeDistanceM, hikeElevationGainM } from '../../src/format';
 import { colors } from '../../src/theme';
 
 export default function LikedScreen() {
@@ -70,7 +70,8 @@ export default function LikedScreen() {
                 <Text style={styles.name}>{item.name}</Text>
                 <Text style={styles.meta}>
                   {(hikeDistanceM(item.distance_m, item.is_loop) / 1000).toFixed(1)} km ·{' '}
-                  {Math.round(item.elevation_gain_m)} m gain · {item.biome_name}
+                  {Math.round(hikeElevationGainM(item.elevation_gain_m, item.elevation_loss_m, item.is_loop))} m gain ·{' '}
+                  {item.biome_name}
                 </Text>
               </Pressable>
               <Pressable

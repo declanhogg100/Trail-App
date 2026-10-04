@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Modal, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 import { router } from 'expo-router';
 import {
   estimateTrailTime,
@@ -12,7 +12,7 @@ import {
   unlikeTrail,
 } from '../api';
 import { useActiveHike } from '../activeHike';
-import { formatDuration, hikeDistanceM } from '../format';
+import { formatDuration, hikeDistanceM, hikeElevationGainM } from '../format';
 import { haversineMeters } from '../geo';
 import { getCurrentLocation } from '../location';
 import { downloadTrail, getOfflineTrail, isTrailDownloaded, removeOfflineTrail } from '../offlineTrails';
@@ -43,12 +43,23 @@ export function TrailDetailContent({
   const [downloading, setDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState<{ done: number; total: number } | null>(null);
   const [farFromTrail, setFarFromTrail] = useState<{ distanceKm: number } | null>(null);
+  // null until the person actually flips the switch -- is_loop can't tell
+  // a real out-and-back (a dead-end spur, walked twice) apart from a
+  // point-to-point trail that just starts and ends somewhere different
+  // (e.g. Trans-Catalina Trail, hiked once between two harbors); both look
+  // like the same line. Defaults to treating a non-loop trail as
+  // out-and-back, same as before this existed, until corrected.
+  const [roundTripOverride, setRoundTripOverride] = useState<boolean | null>(null);
   const { status: hikeStatus, start: startHike } = useActiveHike();
 
   useEffect(() => {
     // deferred via .then() rather than called synchronously in the effect
     // body -- isTrailDownloaded() is itself synchronous, but setState needs
-    // to happen in a microtask continuation, same reasoning as elsewhere
+    // to happen in a microtask continuation, same reasoning as elsewhere.
+    // A leftover override from a previously-viewed trail shouldn't apply
+    // here, hence resetting it alongside.
+    Promise.resolve().then(() => setRoundTripOverride(null));
+
     Promise.resolve()
       .then(() => isTrailDownloaded(osmId))
       .then(setDownloaded);
@@ -91,6 +102,17 @@ export function TrailDetailContent({
     // here would refetch on every render for callers that pass an inline function
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [osmId]);
+
+  // re-fetch only once the person has actually flipped the out-and-back
+  // switch -- before that, the initial fetch above (using the server's own
+  // is_loop-based default) is already correct, so this intentionally
+  // skips firing on mount
+  useEffect(() => {
+    if (roundTripOverride === null) return;
+    estimateTrailTime(osmId, roundTripOverride)
+      .then(setEstimate)
+      .catch(() => {});
+  }, [osmId, roundTripOverride]);
 
   const toggleLike = async () => {
     try {
@@ -185,6 +207,12 @@ export function TrailDetailContent({
     );
   }
 
+  // a loop never has an out-and-back question to ask -- it's definitionally
+  // not one. For anything else, roundTripOverride (once set) is the
+  // person's own correction; until then, out-and-back is the default guess
+  const isOutAndBack = !trail.is_loop && (roundTripOverride ?? true);
+  const effectiveIsLoop = !isOutAndBack;
+
   return (
     <View>
       <Text style={styles.title}>{trail.name}</Text>
@@ -216,6 +244,25 @@ export function TrailDetailContent({
         </Text>
       </Pressable>
 
+      {!trail.is_loop && (
+        <View style={styles.outAndBackRow}>
+          <View style={styles.outAndBackLabel}>
+            <Text style={styles.outAndBackTitle}>Hiking there and back?</Text>
+            <Text style={styles.outAndBackSubtitle}>
+              {isOutAndBack
+                ? 'Distance, elevation, and time below assume you retrace this route.'
+                : "This trail starts and ends in different places — distance, elevation, and time below aren't doubled."}
+            </Text>
+          </View>
+          <Switch
+            value={isOutAndBack}
+            onValueChange={setRoundTripOverride}
+            trackColor={{ false: colors.border, true: colors.maroon }}
+            thumbColor={colors.white}
+          />
+        </View>
+      )}
+
       <View style={styles.statsGrid}>
         {estimate && (
           <Stat
@@ -225,10 +272,13 @@ export function TrailDetailContent({
         )}
         <Stat
           label="Distance"
-          value={`${(hikeDistanceM(trail.distance_m, trail.is_loop) / 1000).toFixed(1)} km`}
+          value={`${(hikeDistanceM(trail.distance_m, effectiveIsLoop) / 1000).toFixed(1)} km`}
         />
-        <Stat label="Route" value={trail.is_loop ? 'Loop' : 'Out & back'} />
-        <Stat label="Elevation gain" value={`${Math.round(trail.elevation_gain_m)} m`} />
+        <Stat label="Route" value={trail.is_loop ? 'Loop' : isOutAndBack ? 'Out & back' : 'Point to point'} />
+        <Stat
+          label="Elevation gain"
+          value={`${Math.round(hikeElevationGainM(trail.elevation_gain_m, trail.elevation_loss_m, effectiveIsLoop))} m`}
+        />
         <Stat label="Peak elevation" value={`${Math.round(trail.peak_elevation_m)} m`} />
         <Stat label="Peak prominence" value={`${Math.round(trail.peak_prominence_m)} m`} />
         <Stat label="Tree cover" value={`${Math.round(trail.tree_cover_pct)}%`} />
@@ -321,6 +371,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   startHikeButtonText: { fontSize: 16, fontWeight: '700', color: colors.white },
+  outAndBackRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 20,
+    paddingTop: 16,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    gap: 12,
+  },
+  outAndBackLabel: { flex: 1 },
+  outAndBackTitle: { fontSize: 14, fontWeight: '600', color: colors.text },
+  outAndBackSubtitle: { fontSize: 12, color: colors.textSecondary, marginTop: 2 },
   statsGrid: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 24, gap: 16 },
   stat: { width: '45%' },
   statValue: { fontSize: 18, fontWeight: '700', color: colors.text },

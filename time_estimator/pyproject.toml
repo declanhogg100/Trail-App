@@ -19,6 +19,16 @@ dependencies = [
 [project.scripts]
 time-estimator = "time_estimator:main"
 
+[tool.uv.sources]
+# see the same marker in recommender/pyproject.toml -- the production server
+# has no GPU, so this avoids pulling in several GB of unused CUDA packages
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
 [build-system]
 requires = ["uv_build>=0.12.1,<0.13.0"]
 build-backend = "uv_build"

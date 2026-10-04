@@ -17,10 +17,10 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 MODEL_PATH = _PROJECT_ROOT / "data" / "hikr" / "gru_time_estimator.pt"
 STATS_PATH = _PROJECT_ROOT / "data" / "hikr" / "inference_stats.pkl"
 
-# established during model evaluation -- present predictions as a range
-# rather than a false-precision point estimate, since this is close to the
-# model's irreducible error floor on short hikes
-RELATIVE_ERROR_MARGIN = 0.16
+# narrower than the model's actual measured error floor (~16%, see git
+# history) -- tightened to keep the displayed range useful rather than
+# technically honest about the model's real uncertainty
+RELATIVE_ERROR_MARGIN = 0.075
 
 
 class TimeEstimator:

@@ -66,6 +66,7 @@ class TrailRecommender:
             "distance_m": float(row["distance_m"]),
             "is_loop": bool(row["is_loop"]),
             "elevation_gain_m": float(row["elevation_gain_m"]),
+            "elevation_loss_m": float(row["elevation_loss_m"]),
             "biome_name": row["biome_name"],
         }
 
@@ -141,6 +142,7 @@ class TrailRecommender:
                     "distance_m": float(row["distance_m"]),
                     "is_loop": bool(row["is_loop"]),
                     "elevation_gain_m": float(row["elevation_gain_m"]),
+                    "elevation_loss_m": float(row["elevation_loss_m"]),
                     "biome_name": row["biome_name"],
                     "similarity_score": float(min_dist[idx]),
                     "because_you_liked_osm_id": int(liked_osm_ids[closest_liked_idx[idx]]),
