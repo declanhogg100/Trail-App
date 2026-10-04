@@ -23,6 +23,13 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 # wheels, so no system packages (libgdal-dev etc.) should be needed -- if
 # the build below fails on a missing shared library, that's the first place
 # to look.
+#
+# libexpat1 is the one real exception: python:3.12-slim doesn't ship it, but
+# gpxpy's XML parsing (used for GPX hike uploads) needs it at import time --
+# without it, uvicorn crash-loops with "ImportError: libexpat.so.1".
+RUN apt-get update && apt-get install -y --no-install-recommends libexpat1 \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN cd api && uv sync --frozen --no-dev
 
 EXPOSE 8000
