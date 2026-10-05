@@ -68,10 +68,6 @@ class RecommendationItem(BaseModel):
     because_you_liked_osm_id: int
 
 
-class EstimateTimeRequest(BaseModel):
-    gpx: str
-
-
 class EstimateTimeResponse(BaseModel):
     estimated_seconds: float
     range_low_seconds: float

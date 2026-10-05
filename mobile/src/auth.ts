@@ -1,6 +1,6 @@
 import * as AppleAuthentication from 'expo-apple-authentication';
 import * as SecureStore from 'expo-secure-store';
-import { devSignIn, setSessionToken, signInWithApple } from './api';
+import { devSignIn, setSessionToken, signInWithApple, signOutOnServer } from './api';
 
 const SESSION_TOKEN_KEY = 'sessionToken';
 
@@ -37,6 +37,15 @@ export async function signIn(): Promise<void> {
 }
 
 export async function signOut(): Promise<void> {
+  // best-effort -- revokes the token server-side so it can't be reused if
+  // it was ever stolen, but a person needs to be able to sign out locally
+  // even with no connection, so a failure here doesn't block the rest
+  try {
+    await signOutOnServer();
+  } catch {
+    // offline, or the token was already invalid -- either way, still
+    // proceed to clear the local copy below
+  }
   await SecureStore.deleteItemAsync(SESSION_TOKEN_KEY);
   setSessionToken(null);
 }

@@ -41,11 +41,6 @@ export default function AppLayout() {
           options={{
             title: 'Liked',
             tabBarIcon: ({ color, size }) => <FontAwesome name="heart" size={size} color={color} />,
-            headerRight: () => (
-              <Pressable onPress={() => router.push('/downloads')} hitSlop={12} style={{ marginRight: 16 }}>
-                <FontAwesome name="cloud-download" size={20} color={colors.text} />
-              </Pressable>
-            ),
           }}
         />
         <Tabs.Screen
@@ -70,12 +65,6 @@ export default function AppLayout() {
         {/* pushed from within a tab (e.g. tapping a search or explore
             result), not itself a destination in the tab bar */}
         <Tabs.Screen name="trail/[osmId]" options={{ href: null }} />
-        {/* reached via the download icon in Liked's header, not a tab of
-            its own -- see the headerRight above */}
-        <Tabs.Screen
-          name="downloads"
-          options={{ href: null, title: 'Downloaded Trails' }}
-        />
         {/* reached via the gear icon in History's header, not a tab of its
             own -- see the headerRight above */}
         <Tabs.Screen name="settings" options={{ href: null, title: 'Settings' }} />

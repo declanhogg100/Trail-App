@@ -8,7 +8,6 @@ import torch
 from time_estimator.model.gru import GRUTimeEstimator
 from time_estimator.pipeline.dataset import FEATURE_COLUMNS, collate_trails, normalize_features
 from time_estimator.pipeline.hikr_dataset import distance_bucket
-from time_estimator.pipeline.parse_gpx import compute_grade, parse_gpx_string, resample_by_distance
 
 # resolved from this file's location, not the process's working directory --
 # lets a server process started from anywhere (e.g. a combined API project)
@@ -44,15 +43,8 @@ class TimeEstimator:
         user_mean_pace = float(np.mean(paces_kmh))
         return user_mean_pace - self.stats["global_mean_pace"]
 
-    def predict(self, target_hike_gpx: str, previous_hikes: list[dict]) -> dict:
-        points_df = parse_gpx_string(target_hike_gpx)
-        resampled = compute_grade(resample_by_distance(points_df))
-        return self.predict_from_profile(resampled, previous_hikes)
-
-    # shared by predict() (GPX text, e.g. an uploaded/recorded hike) and
-    # callers that already have a resampled {elevation, grade, distance_m}
-    # profile from some other source -- e.g. a catalog trail's own stored
-    # geometry, which has no GPX file to parse in the first place
+    # takes an already-resampled {elevation, grade, distance_m} profile --
+    # e.g. a catalog trail's own stored geometry -- rather than raw GPX
     def predict_from_profile(self, resampled: pd.DataFrame, previous_hikes: list[dict]) -> dict:
         total_distance_m = float(resampled["distance_m"].iloc[-1])
 

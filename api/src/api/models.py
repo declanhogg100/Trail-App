@@ -19,6 +19,11 @@ class User(Base):
     # on the very first sign-in and may withhold thereafter)
     apple_sub: Mapped[str] = mapped_column(String, unique=True, nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    # bumped to "now" on sign-out -- any session token issued before this
+    # point is rejected even though its signature and expiry are still
+    # valid, since a JWT alone has no way to be individually revoked. NULL
+    # means no sign-out has ever invalidated anything yet.
+    tokens_invalid_before: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     liked_trails: Mapped[list["LikedTrail"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"

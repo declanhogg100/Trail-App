@@ -68,9 +68,25 @@ def get_or_create_user(db: Session, apple_sub: str) -> User:
 def create_session_token(user_id: int) -> str:
     payload = {
         "user_id": user_id,
+        # also doubles as the token's own identity for revocation purposes
+        # -- see tokens_invalid_before below
+        "iat": datetime.now(timezone.utc),
         "exp": datetime.now(timezone.utc) + SESSION_EXPIRY,
     }
     return jwt.encode(payload, SESSION_SECRET, algorithm=SESSION_ALGORITHM)
+
+
+def revoke_all_sessions(db: Session, user: User) -> None:
+    """Invalidates every session token issued for this user up to now,
+    including the one making this very request -- called on sign-out so a
+    stolen-but-not-yet-expired token can't keep working after the person
+    who noticed signs out. A stateless JWT can't be revoked individually,
+    so this works by rejecting anything issued before this moment instead
+    (see get_current_user's iat check)."""
+    # stored naive (see get_current_user's comment on why) -- explicit here
+    # rather than relying on SQLite to silently strip tzinfo on the way in
+    user.tokens_invalid_before = datetime.now(timezone.utc).replace(tzinfo=None)
+    db.commit()
 
 
 _bearer_scheme = HTTPBearer()
@@ -88,4 +104,14 @@ def get_current_user(
     user = db.get(User, payload["user_id"])
     if user is None:
         raise HTTPException(status_code=401, detail="user not found")
+
+    if user.tokens_invalid_before is not None:
+        # PyJWT decodes "iat" back into a plain int (epoch seconds); SQLite
+        # round-trips DateTime columns as naive (tzinfo stripped), so both
+        # sides are normalized to naive UTC here rather than risking a
+        # "can't compare offset-naive and offset-aware datetimes" crash
+        issued_at = datetime.fromtimestamp(payload["iat"], tz=timezone.utc).replace(tzinfo=None)
+        if issued_at < user.tokens_invalid_before:
+            raise HTTPException(status_code=401, detail="session has been signed out")
+
     return user

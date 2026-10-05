@@ -2,12 +2,15 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import jwt
-from fastapi import Depends, FastAPI, HTTPException, Response
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
 from recommender.geometry_store import TrailGeometryStore
 from recommender.inference import TrailRecommender
 from recommender.offline_tile_store import OfflineTileStore
 from recommender.profile_store import TrailProfileStore
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 from sqlalchemy.orm import Session
 from time_estimator.inference import TimeEstimator
 
@@ -17,15 +20,15 @@ from api.auth import (
     create_session_token,
     get_current_user,
     get_or_create_user,
+    revoke_all_sessions,
     verify_apple_identity_token,
 )
-from api.db import Base, engine, get_db
+from api.db import Base, engine, get_db, run_migrations
 from api.models import Hike, LikedTrail, User
 from api.privacy_policy import PRIVACY_POLICY_HTML
 from api.support import SUPPORT_HTML
 from api.schemas import (
     AppleSignInRequest,
-    EstimateTimeRequest,
     EstimateTimeResponse,
     HikeCreateRequest,
     HikeResponse,
@@ -58,6 +61,7 @@ models: dict = {}
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(engine)
+    run_migrations()
 
     # loaded once at process startup, not per-request -- the recommender in
     # particular precomputes an embedding for the entire trail catalog, which
@@ -83,6 +87,16 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Trail App API", lifespan=lifespan)
+
+# rate limiting -- keyed by client IP (Caddy forwards the real one via
+# X-Forwarded-For; the api container only ever accepts traffic FROM Caddy,
+# see docker-compose.yml, and uvicorn is run with --proxy-headers to trust
+# it). Applied to the auth endpoints specifically, since those are the ones
+# worth protecting from being hammered -- not a blanket limit on the whole
+# API, which would just get in the way of normal catalog browsing.
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 
 # public, no auth -- this is the URL App Store Connect's privacy policy
@@ -158,9 +172,10 @@ def get_trail(osm_id: int):
 
 
 @app.post("/auth/apple", response_model=SessionResponse)
-def sign_in_with_apple(request: AppleSignInRequest, db: Session = Depends(get_db)):
+@limiter.limit("10/minute")
+def sign_in_with_apple(request: Request, body: AppleSignInRequest, db: Session = Depends(get_db)):
     try:
-        apple_sub = verify_apple_identity_token(request.identity_token)
+        apple_sub = verify_apple_identity_token(body.identity_token)
     except jwt.PyJWTError as e:
         raise HTTPException(status_code=401, detail=f"invalid Apple identity token: {e}")
 
@@ -169,7 +184,8 @@ def sign_in_with_apple(request: AppleSignInRequest, db: Session = Depends(get_db
 
 
 @app.post("/auth/dev-bypass", response_model=SessionResponse)
-def dev_sign_in(db: Session = Depends(get_db)):
+@limiter.limit("10/minute")
+def dev_sign_in(request: Request, db: Session = Depends(get_db)):
     # skips real Apple verification entirely -- only reachable when
     # DEV_AUTH_ENABLED is explicitly set, so this can't accidentally work
     # anywhere this server is actually deployed
@@ -178,6 +194,17 @@ def dev_sign_in(db: Session = Depends(get_db)):
 
     user = get_or_create_user(db, DEV_AUTH_SUB)
     return {"access_token": create_session_token(user.id)}
+
+
+@app.post("/auth/sign-out", status_code=204)
+@limiter.limit("10/minute")
+def sign_out(request: Request, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    # a JWT can't be individually revoked, so this invalidates every token
+    # issued for this user up to now (including the one used to call this
+    # endpoint) rather than just the one the app happens to be holding --
+    # there's no concept of "this device's session" vs "other devices'
+    # sessions" tracked separately, so signing out signs out everywhere
+    revoke_all_sessions(db, user)
 
 
 @app.delete("/me", status_code=204)
@@ -281,16 +308,6 @@ def _previous_hikes(user: User, db: Session) -> list[dict]:
         {"distance_m": h.distance_m, "moving_time_s": h.moving_time_s}
         for h in db.query(Hike).filter(Hike.user_id == user.id)
     ]
-
-
-@app.post("/estimate-time", response_model=EstimateTimeResponse)
-def estimate_time(
-    request: EstimateTimeRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)
-):
-    try:
-        return models["time_estimator"].predict(request.gpx, _previous_hikes(user, db))
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"failed to parse or estimate hike: {e}")
 
 
 @app.get("/trails/{osm_id}/estimate-time", response_model=EstimateTimeResponse)

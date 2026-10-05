@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 # defaults to living alongside the source (fine for local dev); in
@@ -25,3 +25,16 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def run_migrations() -> None:
+    """Base.metadata.create_all() only creates missing TABLES, never adds
+    columns to one that already exists -- there's no Alembic (or similar)
+    in this small a project, so new columns get a one-off ALTER TABLE here
+    instead. Checked via PRAGMA first (rather than try/except around the
+    ALTER itself) since a failed statement mid-transaction can otherwise
+    leave the connection unable to cleanly commit."""
+    with engine.begin() as conn:
+        existing_columns = {row[1] for row in conn.execute(text("PRAGMA table_info(users)"))}
+        if "tokens_invalid_before" not in existing_columns:
+            conn.execute(text("ALTER TABLE users ADD COLUMN tokens_invalid_before DATETIME"))

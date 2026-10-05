@@ -127,6 +127,13 @@ export async function devSignIn(): Promise<string> {
   return access_token;
 }
 
+// invalidates the current session token server-side (not just locally) --
+// a stolen token stops working immediately on sign-out, rather than
+// remaining valid until its 30-day expiry just because nobody has it anymore
+export function signOutOnServer(): Promise<void> {
+  return request("/auth/sign-out", { method: "POST" });
+}
+
 // --- trail catalog (public, no auth needed) ---
 
 export function listTrails(
@@ -240,13 +247,6 @@ export function deleteHike(id: number): Promise<void> {
 
 export function getRecommendations(topK = 10): Promise<RecommendationItem[]> {
   return request(`/recommend?top_k=${topK}`, { method: "POST" });
-}
-
-export function estimateTime(gpx: string): Promise<EstimateTimeResponse> {
-  return request("/estimate-time", {
-    method: "POST",
-    body: JSON.stringify({ gpx }),
-  });
 }
 
 // roundTrip left undefined defers to the trail's own is_loop guess

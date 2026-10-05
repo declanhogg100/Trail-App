@@ -34,4 +34,11 @@ RUN cd api && uv sync --frozen --no-dev
 
 EXPOSE 8000
 WORKDIR /app/api
-CMD ["uv", "run", "uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# --proxy-headers + --forwarded-allow-ips='*' trusts the X-Forwarded-For
+# header Caddy sets on every request it proxies -- needed so rate limiting
+# (see main.py) keys on the real client IP instead of Caddy's own container
+# IP (which every request would otherwise appear to come from). Safe to
+# trust unconditionally here specifically because this container is never
+# reachable except through Caddy -- see docker-compose.yml's "expose" (not
+# "ports") on the api service.
+CMD ["uv", "run", "uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips=*"]
