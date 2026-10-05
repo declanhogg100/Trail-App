@@ -19,9 +19,10 @@ export async function restoreSession(): Promise<boolean> {
 // Runs Apple's native sign-in sheet, exchanges the resulting identity token
 // for our own session token via the backend, and persists it for next launch.
 export async function signIn(): Promise<void> {
-  const credential = await AppleAuthentication.signInAsync({
-    requestedScopes: [AppleAuthentication.AppleAuthenticationScope.FULL_NAME],
-  });
+  // no requestedScopes -- the backend only ever authenticates by the
+  // identity token's own stable Apple user id (see api/src/api/auth.py),
+  // never the person's name, so there's no reason to ask Apple for it
+  const credential = await AppleAuthentication.signInAsync();
 
   if (!credential.identityToken) {
     throw new Error('Apple did not return an identity token');

@@ -3,6 +3,7 @@ from pathlib import Path
 
 import jwt
 from fastapi import Depends, FastAPI, HTTPException, Response
+from fastapi.responses import HTMLResponse
 from recommender.geometry_store import TrailGeometryStore
 from recommender.inference import TrailRecommender
 from recommender.offline_tile_store import OfflineTileStore
@@ -20,6 +21,7 @@ from api.auth import (
 )
 from api.db import Base, engine, get_db
 from api.models import Hike, LikedTrail, User
+from api.privacy_policy import PRIVACY_POLICY_HTML
 from api.schemas import (
     AppleSignInRequest,
     EstimateTimeRequest,
@@ -80,6 +82,14 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Trail App API", lifespan=lifespan)
+
+
+# public, no auth -- this is the URL App Store Connect's privacy policy
+# field points to, so it needs to be reachable by anyone, not just signed-in
+# app users
+@app.get("/privacy", response_class=HTMLResponse)
+def privacy_policy():
+    return PRIVACY_POLICY_HTML
 
 
 @app.get("/trails", response_model=TrailListResponse)

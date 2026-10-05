@@ -8,7 +8,7 @@ export default function SignInScreen() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Trail App</Text>
+      <Text style={styles.title}>HoggHikes</Text>
       <AppleAuthentication.AppleAuthenticationButton
         buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}
         buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.WHITE}

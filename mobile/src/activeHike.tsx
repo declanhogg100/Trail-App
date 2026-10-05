@@ -157,7 +157,7 @@ export function ActiveHikeProvider({ children }: PropsWithChildren) {
       showsBackgroundLocationIndicator: true,
       pausesUpdatesAutomatically: false,
       foregroundService: {
-        notificationTitle: 'Trail App',
+        notificationTitle: 'HoggHikes',
         notificationBody: 'Tracking your hike in the background',
       },
     });

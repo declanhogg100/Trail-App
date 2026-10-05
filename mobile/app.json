@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "mobile",
+    "name": "HoggHikes",
     "slug": "mobile",
     "version": "1.0.0",
     "scheme": "trailapp",
@@ -39,8 +39,8 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "Trail App uses your location to find hikes near you and to track active hikes.",
-          "locationAlwaysAndWhenInUsePermission": "Trail App tracks your hike's route and distance in the background, even while your phone is locked or the app isn't in view.",
+          "locationWhenInUsePermission": "HoggHikes uses your location to find hikes near you and to track active hikes.",
+          "locationAlwaysAndWhenInUsePermission": "HoggHikes tracks your hike's route and distance in the background, even while your phone is locked or the app isn't in view.",
           "isIosBackgroundLocationEnabled": true
         }
       ],

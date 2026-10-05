@@ -15,6 +15,7 @@
       "distribution": "internal"
     },
     "production": {
+      "autoIncrement": true,
       "env": {
         "EXPO_PUBLIC_API_BASE_URL": "https://157-230-214-65.sslip.io"
       }
