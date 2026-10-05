@@ -195,6 +195,12 @@ export function offlineTileUrlTemplate(osmId: number): string {
   return `${API_BASE_URL}/trails/${osmId}/offline-tiles/{z}/{x}/{y}.png`;
 }
 
+// permanently deletes the account and all of its data (liked trails, hike
+// history) server-side -- required by App Store review guideline 5.1.1(v)
+export function deleteAccount(): Promise<void> {
+  return request('/me', { method: 'DELETE' });
+}
+
 // --- liked trails (requires sign-in) ---
 
 export function listLikedTrails(): Promise<TrailSummary[]> {

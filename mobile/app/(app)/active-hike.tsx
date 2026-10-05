@@ -134,6 +134,7 @@ type FinishedSummary = {
 export default function ActiveHikeScreen() {
   const {
     status,
+    sessionId,
     trailName,
     osmId,
     distanceM,
@@ -156,8 +157,26 @@ export default function ActiveHikeScreen() {
   // render
   const trailBounds = useMemo(() => (trailLines ? boundsFromTrail(trailLines) : null), [trailLines]);
 
+  // a finished hike's summary is only otherwise cleared by tapping "Done" --
+  // without this, starting a new hike without dismissing the previous
+  // summary first would reopen Active Hike straight onto the OLD hike's
+  // finish screen instead of the new one's live map
+  useEffect(() => {
+    Promise.resolve().then(() => setSummary(null));
+  }, [sessionId]);
+
   useEffect(() => {
     let cancelled = false;
+    // reset immediately, not just once the fetch resolves -- otherwise a
+    // new hike starting while the previous trail's geometry is still in
+    // state would leave mapReady (and trailBounds/trailStart/trailEnd)
+    // pointing at the OLD trail for the entire fetch, instead of correctly
+    // hiding the map until the new trail's own geometry has actually loaded
+    Promise.resolve().then(() => {
+      setTrailLines(null);
+      setGeometryResolved(false);
+      setTilesDir(null);
+    });
     const load = async () => {
       if (osmId == null) return null;
       try {
@@ -324,7 +343,12 @@ export default function ActiveHikeScreen() {
   return (
     <View style={styles.container}>
       {mapReady && (
-        <MapLibreMap style={styles.map} mapStyle={BLANK_STYLE}>
+        // keyed on sessionId so a new hike (even a restart of the same
+        // trail) fully remounts the map -- Camera's initialViewState only
+        // ever applies at mount, so without this a second hike would just
+        // inherit wherever the camera was left after the first one,
+        // possibly outside the new trail's maxBounds
+        <MapLibreMap key={sessionId} style={styles.map} mapStyle={BLANK_STYLE}>
           <Camera
             ref={cameraRef}
             initialViewState={initialFocus ? { center: initialFocus, zoom: initialZoom } : undefined}

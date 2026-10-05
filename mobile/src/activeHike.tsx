@@ -16,6 +16,12 @@ type Status = 'idle' | 'active' | 'paused';
 
 type ActiveHikeContextValue = {
   status: Status;
+  // bumped once per start() call (never on resume()) -- lets screens that
+  // stay mounted across multiple hikes (so GPS tracking survives a tab
+  // switch) detect "a genuinely new hike just began" and reset their own
+  // per-hike-session state (stale finish summary, map camera position)
+  // accordingly, without reacting to every pause/resume too
+  sessionId: number;
   trailName: string | null;
   osmId: number | null;
   distanceM: number;
@@ -65,6 +71,7 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
 
 export function ActiveHikeProvider({ children }: PropsWithChildren) {
   const [status, setStatus] = useState<Status>('idle');
+  const [sessionId, setSessionId] = useState(0);
   const [trailName, setTrailName] = useState<string | null>(null);
   const [osmId, setOsmId] = useState<number | null>(null);
   const [distanceM, setDistanceM] = useState(0);
@@ -171,6 +178,7 @@ export function ActiveHikeProvider({ children }: PropsWithChildren) {
 
   const start = useCallback(
     async (name: string, newOsmId: number) => {
+      setSessionId((id) => id + 1);
       setTrailName(name);
       setOsmId(newOsmId);
       setDistanceM(0);
@@ -228,6 +236,7 @@ export function ActiveHikeProvider({ children }: PropsWithChildren) {
     <ActiveHikeContext.Provider
       value={{
         status,
+        sessionId,
         trailName,
         osmId,
         distanceM,

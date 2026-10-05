@@ -162,6 +162,16 @@ def dev_sign_in(db: Session = Depends(get_db)):
     return {"access_token": create_session_token(user.id)}
 
 
+@app.delete("/me", status_code=204)
+def delete_account(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    # cascade="all, delete-orphan" on User.liked_trails and User.hikes (see
+    # models.py) takes care of removing those rows too -- required by App
+    # Store review guideline 5.1.1(v): any app offering account creation
+    # must offer in-app account deletion, not just a website/support request
+    db.delete(user)
+    db.commit()
+
+
 @app.get("/me/liked-trails", response_model=list[TrailSummary])
 def list_liked_trails(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     liked = db.query(LikedTrail).filter(LikedTrail.user_id == user.id).all()

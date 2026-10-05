@@ -60,6 +60,11 @@ export default function AppLayout() {
           options={{
             title: 'History',
             tabBarIcon: ({ color, size }) => <FontAwesome name="history" size={size} color={color} />,
+            headerRight: () => (
+              <Pressable onPress={() => router.push('/settings')} hitSlop={12} style={{ marginRight: 16 }}>
+                <FontAwesome name="gear" size={22} color={colors.text} />
+              </Pressable>
+            ),
           }}
         />
         {/* pushed from within a tab (e.g. tapping a search or explore
@@ -71,6 +76,9 @@ export default function AppLayout() {
           name="downloads"
           options={{ href: null, title: 'Downloaded Trails' }}
         />
+        {/* reached via the gear icon in History's header, not a tab of its
+            own -- see the headerRight above */}
+        <Tabs.Screen name="settings" options={{ href: null, title: 'Settings' }} />
       </Tabs>
     </ActiveHikeProvider>
   );
