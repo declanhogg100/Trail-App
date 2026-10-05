@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Modal, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import {
   estimateTrailTime,
   EstimateTimeResponse,
@@ -60,10 +60,6 @@ export function TrailDetailContent({
     // here, hence resetting it alongside.
     Promise.resolve().then(() => setRoundTripOverride(null));
 
-    Promise.resolve()
-      .then(() => isTrailDownloaded(osmId))
-      .then(setDownloaded);
-
     getTrail(osmId)
       .then((result) => {
         setOffline(false);
@@ -85,13 +81,6 @@ export function TrailDetailContent({
         }
       });
 
-    // same reasoning as the estimate fetch below -- not knowing whether
-    // it's liked (e.g. while offline) shouldn't block viewing the trail
-    // itself, so this failing quietly just leaves isLiked at its default
-    listLikedTrails()
-      .then((liked) => setIsLiked(liked.some((t) => t.osm_id === osmId)))
-      .catch(() => {});
-
     // a missing estimate (e.g. a rare per-trail profile build failure)
     // shouldn't block the rest of the trail's details from showing -- just
     // silently omit the estimate section rather than surfacing an error
@@ -102,6 +91,36 @@ export function TrailDetailContent({
     // here would refetch on every render for callers that pass an inline function
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [osmId]);
+
+  // liked/downloaded status specifically needs to refetch on every focus,
+  // not just mount -- this screen stays mounted in the navigation stack
+  // while you visit the Liked/Downloaded tab and (un)like or remove the
+  // trail from there, so a plain mount-only effect would keep showing
+  // whatever was true when this screen first loaded
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+
+      Promise.resolve()
+        .then(() => isTrailDownloaded(osmId))
+        .then((result) => {
+          if (!cancelled) setDownloaded(result);
+        });
+
+      // not knowing whether it's liked (e.g. while offline) shouldn't block
+      // viewing the trail itself, so this failing quietly just leaves
+      // isLiked at its current value
+      listLikedTrails()
+        .then((liked) => {
+          if (!cancelled) setIsLiked(liked.some((t) => t.osm_id === osmId));
+        })
+        .catch(() => {});
+
+      return () => {
+        cancelled = true;
+      };
+    }, [osmId])
+  );
 
   // re-fetch only once the person has actually flipped the out-and-back
   // switch -- before that, the initial fetch above (using the server's own
