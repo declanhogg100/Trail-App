@@ -22,6 +22,7 @@ from api.auth import (
 from api.db import Base, engine, get_db
 from api.models import Hike, LikedTrail, User
 from api.privacy_policy import PRIVACY_POLICY_HTML
+from api.support import SUPPORT_HTML
 from api.schemas import (
     AppleSignInRequest,
     EstimateTimeRequest,
@@ -90,6 +91,13 @@ app = FastAPI(title="Trail App API", lifespan=lifespan)
 @app.get("/privacy", response_class=HTMLResponse)
 def privacy_policy():
     return PRIVACY_POLICY_HTML
+
+
+# public, no auth -- this is the URL App Store Connect's support URL field
+# points to
+@app.get("/support", response_class=HTMLResponse)
+def support():
+    return SUPPORT_HTML
 
 
 @app.get("/trails", response_model=TrailListResponse)
