@@ -1,0 +1,27 @@
+diff --git a/node_modules/expo-apple-authentication/ios/AppleAuthenticationRequest.swift b/node_modules/expo-apple-authentication/ios/AppleAuthenticationRequest.swift
+index d933f9c..ac56dbd 100644
+--- a/node_modules/expo-apple-authentication/ios/AppleAuthenticationRequest.swift
++++ b/node_modules/expo-apple-authentication/ios/AppleAuthenticationRequest.swift
+@@ -81,9 +81,18 @@ final class AppleAuthenticationRequest: NSObject, ASAuthorizationControllerPrese
+   // MARK: - ASAuthorizationControllerPresentationContextProviding
+ 
+   func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
+-    guard let window = UIApplication.shared.keyWindow else {
+-      fatalError("Unable to present authentication modal because UIApplication.shared.keyWindow is not available")
+-    }
+-    return window
++    // UIApplication.shared.keyWindow was deprecated in iOS 13 specifically
++    // because it's unreliable in multi-scene environments -- iPad apps are
++    // multi-scene-capable at the OS level even without Stage Manager or
++    // Split View actively in use, unlike iPhone (effectively always
++    // single-scene), which is why the original implementation here would
++    // intermittently return nil -- and then hard-crash via fatalError --
++    // on iPad specifically. This looks up the key window through the
++    // current foreground-active scene instead, with a safe fallback
++    // instead of a crash if a window genuinely can't be found.
++    let scene = UIApplication.shared.connectedScenes
++      .first { $0.activationState == .foregroundActive } as? UIWindowScene
++    let window = scene?.windows.first { $0.isKeyWindow } ?? scene?.windows.first
++    return window ?? UIWindow()
+   }
+ }
