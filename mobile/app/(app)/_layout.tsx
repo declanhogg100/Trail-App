@@ -20,6 +20,14 @@ export default function AppLayout() {
           tabBarStyle: { backgroundColor: colors.surface, borderTopColor: colors.border },
           tabBarActiveTintColor: colors.maroonLight,
           tabBarInactiveTintColor: colors.textMuted,
+          // set once here, at the navigator level, rather than per-screen --
+          // shows on every tab's header by default instead of needing to be
+          // repeated (and kept in sync) on each one individually
+          headerRight: () => (
+            <Pressable onPress={() => router.push('/settings')} hitSlop={12} style={{ marginRight: 16 }}>
+              <FontAwesome name="gear" size={22} color={colors.text} />
+            </Pressable>
+          ),
         }}
       >
         <Tabs.Screen
@@ -55,19 +63,15 @@ export default function AppLayout() {
           options={{
             title: 'History',
             tabBarIcon: ({ color, size }) => <FontAwesome name="history" size={size} color={color} />,
-            headerRight: () => (
-              <Pressable onPress={() => router.push('/settings')} hitSlop={12} style={{ marginRight: 16 }}>
-                <FontAwesome name="gear" size={22} color={colors.text} />
-              </Pressable>
-            ),
           }}
         />
         {/* pushed from within a tab (e.g. tapping a search or explore
             result), not itself a destination in the tab bar */}
         <Tabs.Screen name="trail/[osmId]" options={{ href: null }} />
-        {/* reached via the gear icon in History's header, not a tab of its
-            own -- see the headerRight above */}
-        <Tabs.Screen name="settings" options={{ href: null, title: 'Settings' }} />
+        {/* reached via the gear icon shown on every tab's header, not a tab
+            of its own -- headerRight is cleared here specifically so the
+            settings screen doesn't show a gear pointing back at itself */}
+        <Tabs.Screen name="settings" options={{ href: null, title: 'Settings', headerRight: () => null }} />
       </Tabs>
     </ActiveHikeProvider>
   );
