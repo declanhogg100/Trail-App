@@ -413,7 +413,19 @@ export default function SearchScreen() {
         <View style={styles.detailSheet}>
           <View style={styles.detailHeader}>
             <View style={styles.dragHandle} />
-            <Pressable style={styles.closeButton} onPress={() => setSelectedTrail(null)}>
+            <Pressable
+              style={styles.closeButton}
+              onPress={() => {
+                setSelectedTrail(null);
+                // marker selection (the enlarged/highlighted pin) is native
+                // map-SDK visual state, entirely separate from the `markers`
+                // prop array -- swapping back to the full marker list above
+                // does NOT clear it on its own, so without this the just-
+                // closed marker stays stuck looking selected until tapped
+                // away from and back onto
+                mapRef.current?.selectMarker(undefined);
+              }}
+            >
               <FontAwesome name="times" size={20} color={colors.text} />
             </Pressable>
           </View>
